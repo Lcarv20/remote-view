@@ -57,7 +57,7 @@ drop-dir --id preview-v2 dist/
 ## Useful Options & Management
 
 - `--id <slug>`: stable custom URL slug instead of a random 6-character ID
-- `--theme dark|light|auto`: default color scheme for wrapped fragments (default: `dark`)
+- `--theme auto|dark|light`: default color scheme for wrapped fragments (default: `auto` / system)
 - `--local` / `-o <path>`: write self-contained HTML locally without SSH
 - `--sync-assets`: force re-upload of `assets/rv.*` and `assets/fonts/*` to `/_assets/` on the Pi
 - `--host <user@host>` / `--url <base-url>`: override configured SSH target or public URL

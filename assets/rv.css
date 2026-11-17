@@ -43,78 +43,48 @@
   --rv-radius-lg: 0.875rem;
   --rv-radius-pill: 9999px;
 
-  /* Dark paper palette (warm charcoal e-ink) */
-  --rv-bg: #151412;
-  --rv-bg-elevated: #1c1b18;
-  --rv-bg-subtle: #25231f;
-  --rv-border: #2f2d27;
-  --rv-border-strong: #434037;
-  --rv-text: #ece7dc;
-  --rv-text-muted: #aaa396;
-  --rv-text-faint: #7f796d;
+  color-scheme: light dark;
 
-  --rv-accent: #7bb4e0;
-  --rv-accent-fg: #0e2436;
-  --rv-accent-soft: rgba(123, 180, 224, 0.12);
-  --rv-accent-border: rgba(123, 180, 224, 0.30);
+  /* Warm archival paper (light) / warm charcoal e-ink (dark) */
+  --rv-bg: light-dark(#f7f4ec, #151412);
+  --rv-bg-elevated: light-dark(#fffdf8, #1c1b18);
+  --rv-bg-subtle: light-dark(#eee9dd, #25231f);
+  --rv-border: light-dark(#e1dacb, #2f2d27);
+  --rv-border-strong: light-dark(#cbc1ae, #434037);
+  --rv-text: light-dark(#1f1e1a, #ece7dc);
+  --rv-text-muted: light-dark(#5c584e, #aaa396);
+  --rv-text-faint: light-dark(#7c7669, #7f796d);
 
-  --rv-success: #6bc497;
-  --rv-success-soft: rgba(107, 196, 151, 0.12);
-  --rv-success-border: rgba(107, 196, 151, 0.30);
+  --rv-accent: light-dark(#1f5d8c, #7bb4e0);
+  --rv-accent-fg: light-dark(#ffffff, #0e2436);
+  --rv-accent-soft: light-dark(rgba(31, 93, 140, 0.09), rgba(123, 180, 224, 0.12));
+  --rv-accent-border: light-dark(rgba(31, 93, 140, 0.26), rgba(123, 180, 224, 0.30));
 
-  --rv-warning: #e5b35d;
-  --rv-warning-soft: rgba(229, 179, 93, 0.12);
-  --rv-warning-border: rgba(229, 179, 93, 0.30);
+  --rv-success: light-dark(#1e7a50, #6bc497);
+  --rv-success-soft: light-dark(rgba(30, 122, 80, 0.09), rgba(107, 196, 151, 0.12));
+  --rv-success-border: light-dark(rgba(30, 122, 80, 0.26), rgba(107, 196, 151, 0.30));
 
-  --rv-danger: #e47c78;
-  --rv-danger-soft: rgba(228, 124, 120, 0.12);
-  --rv-danger-border: rgba(228, 124, 120, 0.30);
+  --rv-warning: light-dark(#9e5a08, #e5b35d);
+  --rv-warning-soft: light-dark(rgba(158, 90, 8, 0.09), rgba(229, 179, 93, 0.12));
+  --rv-warning-border: light-dark(rgba(158, 90, 8, 0.26), rgba(229, 179, 93, 0.30));
 
-  --rv-code-bg: #191815;
-  --rv-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --rv-shadow-md: 0 12px 28px -8px rgba(0, 0, 0, 0.5);
+  --rv-danger: light-dark(#b53d39, #e47c78);
+  --rv-danger-soft: light-dark(rgba(181, 61, 57, 0.09), rgba(228, 124, 120, 0.12));
+  --rv-danger-border: light-dark(rgba(181, 61, 57, 0.26), rgba(228, 124, 120, 0.30));
 
-  color-scheme: dark light;
+  --rv-code-bg: light-dark(#f1ede3, #191815);
+  --rv-shadow-sm: light-dark(0 1px 2px rgba(31, 30, 26, 0.05), 0 1px 2px rgba(0, 0, 0, 0.25));
+  --rv-shadow-md: light-dark(0 12px 28px -10px rgba(31, 30, 26, 0.14), 0 12px 28px -8px rgba(0, 0, 0, 0.5));
+
   scrollbar-color: var(--rv-border-strong) var(--rv-bg);
-}
 
-/* Warm archival paper palette (Light mode) */
-html.rv-light {
-  --rv-bg: #f7f4ec;
-  --rv-bg-elevated: #fffdf8;
-  --rv-bg-subtle: #eee9dd;
-  --rv-border: #e1dacb;
-  --rv-border-strong: #cbc1ae;
-  --rv-text: #1f1e1a;
-  --rv-text-muted: #5c584e;
-  --rv-text-faint: #7c7669;
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
 
-  --rv-accent: #1f5d8c;
-  --rv-accent-fg: #ffffff;
-  --rv-accent-soft: rgba(31, 93, 140, 0.09);
-  --rv-accent-border: rgba(31, 93, 140, 0.26);
-
-  --rv-success: #1e7a50;
-  --rv-success-soft: rgba(30, 122, 80, 0.09);
-  --rv-success-border: rgba(30, 122, 80, 0.26);
-
-  --rv-warning: #9e5a08;
-  --rv-warning-soft: rgba(158, 90, 8, 0.09);
-  --rv-warning-border: rgba(158, 90, 8, 0.26);
-
-  --rv-danger: #b53d39;
-  --rv-danger-soft: rgba(181, 61, 57, 0.09);
-  --rv-danger-border: rgba(181, 61, 57, 0.26);
-
-  --rv-code-bg: #f1ede3;
-  --rv-shadow-sm: 0 1px 2px rgba(31, 30, 26, 0.05);
-  --rv-shadow-md: 0 12px 28px -10px rgba(31, 30, 26, 0.14);
-
-  color-scheme: light;
-}
-
-html.rv-dark {
-  color-scheme: dark;
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
 }
 
 *,
@@ -995,6 +965,17 @@ details[open] > summary {
 .rv-menu-list button:hover,
 .rv-menu-list a:hover {
   background: var(--rv-bg-subtle);
+}
+
+.rv-menu-list [aria-checked="true"] {
+  color: var(--rv-accent);
+  background: var(--rv-accent-soft);
+}
+
+.rv-menu-list [aria-checked="true"]::after {
+  content: "✓";
+  margin-left: auto;
+  font-size: 0.8rem;
 }
 
 .rv-menu-list hr {

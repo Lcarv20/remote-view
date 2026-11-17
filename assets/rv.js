@@ -56,24 +56,76 @@ async function hydrateIcons(scope = document) {
 }
 
 /* --------------------------------------------------------------------------
-   Theme Switching (Paper Light / Warm Dark)
+   Theme Switching (System / Paper Light / Warm Dark) & Clipboard
    -------------------------------------------------------------------------- */
 
 const root = document.documentElement;
-const themeToggle = document.getElementById("rv-theme-toggle");
+const themeMeta = document.querySelector('meta[name="color-scheme"]');
+const themeBtn = document.getElementById("rv-theme-btn");
 const themeIcon = document.getElementById("rv-theme-icon");
 const themeLabel = document.getElementById("rv-theme-label");
+const themeMenu = document.getElementById("rv-theme-menu");
+const systemLabel = document.getElementById("rv-system-label");
 const copyUrlBtn = document.getElementById("rv-copy-url");
 const copyUrlLabel = document.getElementById("rv-copy-url-label");
+const osDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
-function updateThemeButton(theme) {
-  const isDark = theme !== "light";
-  if (themeIcon) {
-    themeIcon.dataset.iconHydrated = "";
-    themeIcon.setAttribute("data-icon", isDark ? "sun" : "moon");
-    hydrateIcons(themeIcon.parentElement);
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
   }
-  if (themeLabel) themeLabel.textContent = isDark ? "Light" : "Dark";
+  return Promise.resolve(legacyCopy(text));
+}
+
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.top = "-9999px";
+  ta.style.left = "-9999px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus({ preventScroll: true });
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+function resolveTheme(mode) {
+  if (mode === "light" || mode === "dark") return mode;
+  return osDarkQuery.matches ? "dark" : "light";
+}
+
+function updateThemeUI(mode, resolved) {
+  const osResolved = osDarkQuery.matches ? "Dark" : "Light";
+  if (systemLabel) systemLabel.textContent = `System (${osResolved})`;
+
+  if (themeLabel) {
+    themeLabel.textContent = mode === "auto" ? "System" : (mode === "light" ? "Light" : "Dark");
+  }
+
+  if (themeIcon) {
+    const iconName = mode === "auto"
+      ? (resolved === "light" ? "sun" : "moon")
+      : (mode === "light" ? "sun" : "moon");
+    themeIcon.dataset.iconHydrated = "";
+    themeIcon.setAttribute("data-icon", iconName);
+    hydrateIcons(themeBtn || themeIcon.parentElement);
+  }
+
+  if (themeMenu) {
+    for (const item of themeMenu.querySelectorAll("[data-theme-choice]")) {
+      item.setAttribute("aria-checked", item.dataset.themeChoice === mode ? "true" : "false");
+    }
+  }
 }
 
 async function renderMermaid(theme) {
@@ -97,18 +149,27 @@ async function renderMermaid(theme) {
   await mermaid.run({ nodes });
 }
 
-async function applyTheme(theme, persist = false) {
-  root.classList.remove("rv-dark", "rv-light");
-  root.classList.add(theme === "light" ? "rv-light" : "rv-dark");
-  root.dataset.theme = theme;
-  root.style.colorScheme = theme;
-  if (persist) {
-    try { localStorage.setItem("rv-theme", theme); } catch {}
+async function applyThemeMode(mode, persist = false) {
+  const normalized = (mode === "light" || mode === "dark") ? mode : "auto";
+  const resolved = resolveTheme(normalized);
+
+  if (themeMeta) {
+    themeMeta.content = normalized === "auto" ? "light dark" : normalized;
   }
-  updateThemeButton(theme);
-  window.rvSyncHighlightTheme?.(theme);
-  window.rvApplyChartTheme?.(theme);
-  await renderMermaid(theme);
+  root.dataset.themeMode = normalized;
+  root.dataset.theme = resolved;
+
+  if (persist) {
+    try {
+      if (normalized === "auto") localStorage.removeItem("rv-theme");
+      else localStorage.setItem("rv-theme", normalized);
+    } catch {}
+  }
+
+  updateThemeUI(normalized, resolved);
+  window.rvSyncHighlightTheme?.(resolved);
+  window.rvApplyChartTheme?.(resolved);
+  await renderMermaid(resolved);
 }
 
 /* --------------------------------------------------------------------------
@@ -342,14 +403,9 @@ function initCodeBlocks() {
       copyBtn.className = "rv-copy-code";
       copyBtn.textContent = "Copy";
       copyBtn.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(codeEl.innerText);
-          copyBtn.textContent = "Copied";
-          setTimeout(() => { copyBtn.textContent = "Copy"; }, 1400);
-        } catch {
-          copyBtn.textContent = "Failed";
-          setTimeout(() => { copyBtn.textContent = "Copy"; }, 1400);
-        }
+        const ok = await copyText(codeEl.innerText);
+        copyBtn.textContent = ok ? "Copied" : "Failed";
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 1400);
       });
       actions.appendChild(copyBtn);
       wrap.appendChild(actions);
@@ -396,22 +452,38 @@ initSidebarDrawer();
 initMath();
 await hydrateIcons(document);
 
-const currentTheme = root.dataset.theme || "dark";
-updateThemeButton(currentTheme);
-await renderMermaid(currentTheme);
+const initialMode = root.dataset.themeMode || "auto";
+const initialResolved = resolveTheme(initialMode);
+updateThemeUI(initialMode, initialResolved);
+await renderMermaid(initialResolved);
 
-themeToggle?.addEventListener("click", () => {
-  const next = root.dataset.theme === "light" ? "dark" : "light";
-  applyTheme(next, true);
+if (themeMenu) {
+  themeMenu.addEventListener("click", (e) => {
+    const choice = e.target.closest("[data-theme-choice]")?.dataset.themeChoice;
+    if (!choice) return;
+    applyThemeMode(choice, true);
+    try { themeMenu.hidePopover(); } catch {}
+  });
+}
+
+osDarkQuery.addEventListener("change", () => {
+  if ((root.dataset.themeMode || "auto") === "auto") {
+    applyThemeMode("auto", false);
+  } else {
+    updateThemeUI(root.dataset.themeMode, resolveTheme(root.dataset.themeMode));
+  }
+});
+
+window.addEventListener("storage", (e) => {
+  if (e.key === "rv-theme") {
+    applyThemeMode(e.newValue || "auto", false);
+  }
 });
 
 copyUrlBtn?.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(window.location.href);
-    if (copyUrlLabel) copyUrlLabel.textContent = "Copied";
-    setTimeout(() => { if (copyUrlLabel) copyUrlLabel.textContent = "Copy URL"; }, 1400);
-  } catch {
-    if (copyUrlLabel) copyUrlLabel.textContent = "Copy failed";
-    setTimeout(() => { if (copyUrlLabel) copyUrlLabel.textContent = "Copy URL"; }, 1400);
+  const ok = await copyText(window.location.href);
+  if (copyUrlLabel) {
+    copyUrlLabel.textContent = ok ? "Copied" : "Copy failed";
+    setTimeout(() => { copyUrlLabel.textContent = "Copy URL"; }, 1400);
   }
 });

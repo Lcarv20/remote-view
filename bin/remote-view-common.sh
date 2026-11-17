@@ -31,7 +31,7 @@ rv_load_config() {
   REMOTE_VIEW_SSH_HOST="${_env_ssh_host:-${REMOTE_VIEW_SSH_HOST:-lcarv@bluyeti-pi.local}}"
   REMOTE_VIEW_PUBLIC_URL="${_env_public_url:-${REMOTE_VIEW_PUBLIC_URL:-http://bluyeti-pi.local}}"
   REMOTE_VIEW_REMOTE_DIR="${_env_remote_dir:-${REMOTE_VIEW_REMOTE_DIR:-/var/www/drops}}"
-  REMOTE_VIEW_THEME="${_env_theme:-${REMOTE_VIEW_THEME:-dark}}"
+  REMOTE_VIEW_THEME="${_env_theme:-${REMOTE_VIEW_THEME:-auto}}"
   REMOTE_VIEW_TEMPLATE="${_env_template:-${REMOTE_VIEW_TEMPLATE:-$repo_dir/template/base.html}}"
   REMOTE_VIEW_SSH_BATCH="${_env_ssh_batch:-${REMOTE_VIEW_SSH_BATCH:-1}}"
 }

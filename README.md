@@ -156,7 +156,7 @@ Override defaults via environment variables or `~/.config/remote-view/config`:
 REMOTE_VIEW_SSH_HOST="lcarv@bluyeti-pi.local"
 REMOTE_VIEW_PUBLIC_URL="http://bluyeti-pi.local"
 REMOTE_VIEW_REMOTE_DIR="/var/www/drops"
-REMOTE_VIEW_THEME="dark"   # dark | light | auto
+REMOTE_VIEW_THEME="auto"   # auto | dark | light
 ```
 
 Precedence: CLI flags (`--host`, `--url`, `--theme`) > environment variables > `~/.config/remote-view/config` > built-in defaults.

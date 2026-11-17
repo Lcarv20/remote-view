@@ -28,7 +28,7 @@ If FILE is a directory, delegates to drop-dir.
 Options:
   -t, --title <text>       Page title (default: "Drop <id>")
   -i, --id <slug>          Custom filename slug without .html (default: random 6-char ID)
-      --theme <mode>       Default theme: dark | light | auto (default: dark)
+      --theme <mode>       Default theme: auto | dark | light (default: auto / system)
       --raw                Upload input verbatim without wrapping in base.html
                            (auto-enabled if input starts with <!DOCTYPE or <html)
       --local              Write self-contained HTML to /tmp/remote-view-<id>.html (no SSH)
@@ -47,7 +47,7 @@ Environment / Config (~/.config/remote-view/config):
   REMOTE_VIEW_SSH_HOST     SSH target (default: lcarv@bluyeti-pi.local)
   REMOTE_VIEW_PUBLIC_URL   Base URL printed after upload (default: http://bluyeti-pi.local)
   REMOTE_VIEW_REMOTE_DIR   Remote web root on Pi (default: /var/www/drops)
-  REMOTE_VIEW_THEME        Default theme: dark | light | auto (default: dark)
+  REMOTE_VIEW_THEME        Default theme: auto | dark | light (default: auto)
   REMOTE_VIEW_TEMPLATE     Path to base.html template
 EOF
 }
@@ -108,9 +108,9 @@ assemble_html() {
   local inline_assets="$7"
   local assets_hash="$8"
 
-  local html_class="rv-dark"
-  if [[ "$theme_mode" == "light" ]]; then
-    html_class="rv-light"
+  local meta_scheme="light dark"
+  if [[ "$theme_mode" == "light" || "$theme_mode" == "dark" ]]; then
+    meta_scheme="$theme_mode"
   fi
 
   local css_tag_file js_tag_file
@@ -136,7 +136,7 @@ assemble_html() {
   RV_TITLE="$(html_escape "$title")" \
   RV_DROP_ID="$drop_id" \
   RV_GENERATED_AT="$generated_at" \
-  RV_HTML_CLASS="$html_class" \
+  RV_META_SCHEME="$meta_scheme" \
   RV_THEME_MODE="$theme_mode" \
   RV_CONTENT_FILE="$content_file" \
   RV_CSS_TAG_FILE="$css_tag_file" \
@@ -161,7 +161,7 @@ assemble_html() {
       t = ENVIRON["RV_TITLE"]
       d = ENVIRON["RV_DROP_ID"]
       g = ENVIRON["RV_GENERATED_AT"]
-      hc = ENVIRON["RV_HTML_CLASS"]
+      ms = ENVIRON["RV_META_SCHEME"]
       tm = ENVIRON["RV_THEME_MODE"]
       cf = ENVIRON["RV_CONTENT_FILE"]
       csf = ENVIRON["RV_CSS_TAG_FILE"]
@@ -175,7 +175,7 @@ assemble_html() {
       line = replace_all(line, "{{TITLE}}", t)
       line = replace_all(line, "{{DROP_ID}}", d)
       line = replace_all(line, "{{GENERATED_AT}}", g)
-      line = replace_all(line, "{{HTML_CLASS}}", hc)
+      line = replace_all(line, "{{META_COLOR_SCHEME}}", ms)
       line = replace_all(line, "{{THEME_MODE}}", tm)
       print line
     }
