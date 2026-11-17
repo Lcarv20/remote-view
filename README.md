@@ -119,27 +119,34 @@ Then on your workstation:
 
 ---
 
-## 3. Workstation & Agent Skill Setup
+## 3. New Computer Setup (`install.sh`)
 
-Run `./install.sh` from the repository root:
+When setting up `remote-view` on a new workstation (assuming your Pi is already running), clone this repo and run `./install.sh`:
 
 ```bash
 ./install.sh
 ```
 
-This creates symlinks pointing directly into this repository:
-- `~/.local/bin/drop-html` → `bin/drop-html`
-- `~/.local/bin/drop-dir` → `bin/drop-dir`
-- `~/.gemini/config/skills/remote-view` → `skills/remote-view` (**Antigravity** global skill)
-- `~/.agents/skills/remote-view` → `skills/remote-view` (**OpenCode** & universal cross-agent global skill)
+What `./install.sh` does automatically:
+- Symlinks `~/.local/bin/drop-html` → [bin/drop-html](bin/drop-html) and `~/.local/bin/drop-dir` → [bin/drop-dir](bin/drop-dir)
+- Symlinks `~/.gemini/config/skills/remote-view` → [skills/remote-view](skills/remote-view) (**Antigravity** global skill)
+- Symlinks `~/.agents/skills/remote-view` → [skills/remote-view](skills/remote-view) (**OpenCode** & universal cross-agent global skill)
+- **Connects to your Pi and checks readiness:**
+  - If passwordless SSH and the Pi HTTP server already work, it syncs `/_assets/` immediately and confirms you're ready.
+  - If SSH key auth isn't configured yet on the new computer, it offers interactively to run `ssh-keygen` (if needed) + `ssh-copy-id`, or prints the exact commands to run (`--no-prompt` skips interactive prompts).
+  - If the Pi hasn't been provisioned yet, it prints the `scp` + `setup-pi.sh` commands.
 
-> Pass `--opencode-native` if you also want a symlink at `~/.config/opencode/skills/remote-view`, or `--uninstall` to remove the symlinks.
+Useful `install.sh` flags:
+- `--host <user@host>` / `--url <base-url>` / `--theme <auto|dark|light>`: save custom defaults into `~/.config/remote-view/config`
+- `--opencode-native`: also symlink into `~/.config/opencode/skills/remote-view`
+- `--no-prompt`: non-interactive mode (prints setup hints instead of prompting)
+- `--uninstall`: remove installed symlinks
 
 Then in prompts to Antigravity or OpenCode, simply tell the agent:
 
 > `use the /remote-view skill for this`
 
-Verify workstation-to-Pi connectivity:
+You can re-verify workstation-to-Pi connectivity anytime with:
 
 ```bash
 drop-html --check
