@@ -1,0 +1,142 @@
+<section class="space-y-2">
+  <div class="flex flex-wrap items-center gap-2">
+    <wa-badge variant="brand">LAN Drop-Box</wa-badge>
+    <wa-badge variant="success">Zero-Build</wa-badge>
+    <wa-badge variant="neutral">Web Awesome + Tailwind v4</wa-badge>
+  </div>
+  <h1>Remote-View Showcase</h1>
+  <p class="rv-muted">
+    Agents output only the inner HTML fragment; <code>drop-html</code> wraps it in the preloaded shell,
+    pushes it over SSH to your Raspberry Pi, and returns a clickable LAN URL.
+  </p>
+</section>
+
+<wa-callout variant="brand">
+  <wa-icon slot="icon" name="circle-info"></wa-icon>
+  <strong>Phone &amp; Browser-Tool Ready:</strong> Because drops are served over plain HTTP on your LAN,
+  both your mobile browser and agent browser tools can inspect the exact same rendered output.
+</wa-callout>
+
+<section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+  <wa-card class="h-full">
+    <div slot="header" class="flex items-center justify-between">
+      <span class="font-semibold">RAM Footprint</span>
+      <wa-badge variant="success">~2 MB</wa-badge>
+    </div>
+    <p class="text-sm rv-muted m-0">Served 24/7 by <code>lighttpd</code> inside a systemd unit.</p>
+  </wa-card>
+  <wa-card class="h-full">
+    <div slot="header" class="flex items-center justify-between">
+      <span class="font-semibold">Token Burn</span>
+      <wa-badge variant="brand">-80%</wa-badge>
+    </div>
+    <p class="text-sm rv-muted m-0">No HTML head, CDN imports, or CSS boilerplate per drop.</p>
+  </wa-card>
+  <wa-card class="h-full">
+    <div slot="header" class="flex items-center justify-between">
+      <span class="font-semibold">Math Check</span>
+      <wa-badge variant="neutral">KaTeX</wa-badge>
+    </div>
+    <p class="text-sm m-0">Latency bound: \(T_{\text{total}} = T_{\text{ssh}} + T_{\text{http}}\)</p>
+  </wa-card>
+</section>
+
+<wa-tab-group>
+  <wa-tab panel="diagram">Architecture</wa-tab>
+  <wa-tab panel="chart">Metrics Chart</wa-tab>
+  <wa-tab panel="code">Publish Snippet</wa-tab>
+
+  <wa-tab-panel name="diagram" active>
+    <pre class="mermaid">
+flowchart LR
+  A["Coding Agent\n(Antigravity / OpenCode)"] -->|stdin HTML fragment| B["drop-html CLI"]
+  B -->|wrap in base.html| C["SSH Push"]
+  C -->|/var/www/drops/id.html| D["Raspberry Pi\n(lighttpd :80)"]
+  D -->|http://bluyeti-pi.local/id.html| E["Phone / Desktop / Agent Browser"]
+    </pre>
+  </wa-tab-panel>
+
+  <wa-tab-panel name="chart">
+    <div class="max-w-2xl mx-auto">
+      <canvas id="tokenChart" height="140"></canvas>
+    </div>
+  </wa-tab-panel>
+
+  <wa-tab-panel name="code">
+    <pre><code class="language-bash">drop-html --title "Cache Architecture" &lt;&lt;'EOF'
+&lt;h1&gt;Redis Write-Through Flow&lt;/h1&gt;
+&lt;pre class="mermaid"&gt;
+sequenceDiagram
+  App-&gt;&gt;Cache: write(key, val)
+  Cache-&gt;&gt;DB: persist(key, val)
+&lt;/pre&gt;
+EOF</code></pre>
+  </wa-tab-panel>
+</wa-tab-group>
+
+<section class="space-y-3">
+  <h2>Component Comparison</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Capability</th>
+        <th>Library</th>
+        <th>Trigger Markup</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>UI Primitives</td>
+        <td>Web Awesome 3</td>
+        <td><code>&lt;wa-card&gt;</code>, <code>&lt;wa-tab-group&gt;</code>, <code>&lt;wa-callout&gt;</code></td>
+      </tr>
+      <tr>
+        <td>Layout Grids</td>
+        <td>Tailwind CSS v4</td>
+        <td><code>class="grid md:grid-cols-2 gap-4"</code></td>
+      </tr>
+      <tr>
+        <td>Syntax Highlighting</td>
+        <td>Highlight.js</td>
+        <td><code>&lt;pre&gt;&lt;code class="language-ts"&gt;</code></td>
+      </tr>
+      <tr>
+        <td>Diagrams</td>
+        <td>Mermaid v12</td>
+        <td><code>&lt;pre class="mermaid"&gt;</code></td>
+      </tr>
+      <tr>
+        <td>Charts</td>
+        <td>Chart.js v4</td>
+        <td><code>&lt;canvas&gt;</code> + <code>new Chart(...)</code></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<wa-details summary="Inspect KaTeX Equation &amp; Details Disclosure">
+  <p>Block math renders without touching single-dollar variables like <code>$PATH</code> or prices like $29:</p>
+  $$
+  \text{Speedup} = \frac{1}{(1 - p) + \frac{p}{s}}
+  $$
+</wa-details>
+
+<script>
+  new Chart(document.getElementById("tokenChart"), {
+    type: "bar",
+    data: {
+      labels: ["Raw Standalone HTML", "Tailwind + Inline CSS", "remote-view Fragment"],
+      datasets: [{
+        label: "Approx. Boilerplate Tokens",
+        data: [950, 620, 45],
+        backgroundColor: ["#64748b", "#818cf8", "#38bdf8"],
+        borderRadius: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: true } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+</script>

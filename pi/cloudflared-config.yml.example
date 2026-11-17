@@ -1,0 +1,16 @@
+# Example cloudflared config for remote-view on a Raspberry Pi
+# Place at ~/.cloudflared/config.yml (or /etc/cloudflared/config.yml)
+
+tunnel: <TUNNEL-UUID>
+credentials-file: /home/<USER>/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  # Serve dropped HTML pages and build outputs over HTTPS when away from home
+  - hostname: view.yourdomain.com
+    service: http://127.0.0.1:80
+
+  # Optional: expose SSH over Cloudflare Tunnel so drop-html / drop-dir also work remotely
+  - hostname: pi-ssh.yourdomain.com
+    service: ssh://127.0.0.1:22
+
+  - service: http_status:404

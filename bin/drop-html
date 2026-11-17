@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RV_PROG="drop-html"
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
+# Fall back to POSIX symlink resolution if readlink -f wasn't available
+if [[ ! -r "$SCRIPT_DIR/remote-view-common.sh" ]]; then
+  _src="${BASH_SOURCE[0]}"
+  while [[ -L "$_src" ]]; do
+    _dir="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
+    _src="$(readlink -- "$_src")"
+    [[ "$_src" != /* ]] && _src="$_dir/$_src"
+  done
+  SCRIPT_DIR="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
+fi
+
+# shellcheck source=bin/remote-view-common.sh
+source "$SCRIPT_DIR/remote-view-common.sh"
+REPO_DIR="$(cd -P -- "$SCRIPT_DIR/.." && pwd)"
+rv_load_config "$REPO_DIR"
+
+usage() {
+  cat <<'EOF'
+Usage: drop-html [OPTIONS] [FILE]
+
+Wrap an HTML fragment in the remote-view shell and publish it to your Pi,
+or save/inspect it locally. Reads from stdin when FILE is omitted or '-'.
+If FILE is a directory, delegates to drop-dir.
+
+Options:
+  -t, --title <text>       Page title (default: "Drop <id>")
+  -i, --id <slug>          Custom filename slug without .html (default: random 6-char ID)
+      --theme <mode>       Default theme: dark | light | auto (default: dark)
+      --raw                Upload input verbatim without wrapping in base.html
+                           (auto-enabled if input starts with <!DOCTYPE or <html)
+      --local              Write assembled HTML to /tmp/remote-view-<id>.html (no SSH)
+  -o, --out <path>         Write assembled HTML to <path> instead of uploading
+      --stdout             Print assembled HTML to stdout without uploading
+      --host <user@host>   Override SSH target (default: $REMOTE_VIEW_SSH_HOST)
+      --url <base-url>     Override public base URL (default: $REMOTE_VIEW_PUBLIC_URL)
+      --list               List published drops on the Pi
+      --rm <id>            Delete <id>.html or <id>/ from the Pi
+      --prune <days>       Delete drops older than <days> days on the Pi
+      --check              Verify template, mDNS/DNS, SSH auth, remote dir, and HTTP server
+  -h, --help               Show this help
+
+Environment / Config (~/.config/remote-view/config):
+  REMOTE_VIEW_SSH_HOST     SSH target (default: lcarv@bluyeti-pi.local)
+  REMOTE_VIEW_PUBLIC_URL   Base URL printed after upload (default: http://bluyeti-pi.local)
+  REMOTE_VIEW_REMOTE_DIR   Remote web root on Pi (default: /var/www/drops)
+  REMOTE_VIEW_THEME        Default theme: dark | light | auto (default: dark)
+  REMOTE_VIEW_TEMPLATE     Path to base.html template
+EOF
+}
+
+html_escape() {
+  local s="$1"
+  s="${s//&/&amp;}"
+  s="${s//</&lt;}"
+  s="${s//>/&gt;}"
+  s="${s//\"/&quot;}"
+  printf '%s' "$s"
+}
+
+assemble_html() {
+  local template_file="$1"
+  local content_file="$2"
+  local title="$3"
+  local drop_id="$4"
+  local generated_at="$5"
+  local theme_mode="$6"
+
+  local html_class="wa-dark"
+  if [[ "$theme_mode" == "light" ]]; then
+    html_class="wa-light"
+  fi
+
+  RV_TITLE="$(html_escape "$title")" \
+  RV_DROP_ID="$drop_id" \
+  RV_GENERATED_AT="$generated_at" \
+  RV_HTML_CLASS="$html_class" \
+  RV_THEME_MODE="$theme_mode" \
+  RV_CONTENT_FILE="$content_file" \
+  awk '
+    function replace_all(str, pat, rep,    idx, out, plen) {
+      out = ""
+      plen = length(pat)
+      while ((idx = index(str, pat)) > 0) {
+        out = out substr(str, 1, idx - 1) rep
+        str = substr(str, idx + plen)
+      }
+      return out str
+    }
+    BEGIN {
+      t = ENVIRON["RV_TITLE"]
+      d = ENVIRON["RV_DROP_ID"]
+      g = ENVIRON["RV_GENERATED_AT"]
+      hc = ENVIRON["RV_HTML_CLASS"]
+      tm = ENVIRON["RV_THEME_MODE"]
+      cf = ENVIRON["RV_CONTENT_FILE"]
+    }
+    /^[[:space:]]*\{\{CONTENT\}\}[[:space:]]*$/ {
+      while ((getline cline < cf) > 0) {
+        print cline
+      }
+      close(cf)
+      next
+    }
+    {
+      line = $0
+      line = replace_all(line, "{{TITLE}}", t)
+      line = replace_all(line, "{{DROP_ID}}", d)
+      line = replace_all(line, "{{GENERATED_AT}}", g)
+      line = replace_all(line, "{{HTML_CLASS}}", hc)
+      line = replace_all(line, "{{THEME_MODE}}", tm)
+      print line
+    }
+  ' "$template_file"
+}
+
+ORIG_ARGS=("$@")
+TITLE=""
+CUSTOM_ID=""
+THEME="$REMOTE_VIEW_THEME"
+RAW_MODE=0
+LOCAL_MODE=0
+OUT_PATH=""
+STDOUT_MODE=0
+INPUT_FILE="-"
+ACTION="publish"
+ACTION_ARG=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -t|--title)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      TITLE="$2"
+      shift 2
+      ;;
+    -i|--id)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      CUSTOM_ID="$2"
+      shift 2
+      ;;
+    --theme)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      THEME="$2"
+      shift 2
+      ;;
+    --raw)
+      RAW_MODE=1
+      shift
+      ;;
+    --no-warn-base)
+      shift
+      ;;
+    --local)
+      LOCAL_MODE=1
+      shift
+      ;;
+    -o|--out)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      OUT_PATH="$2"
+      shift 2
+      ;;
+    --stdout)
+      STDOUT_MODE=1
+      shift
+      ;;
+    --host)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      REMOTE_VIEW_SSH_HOST="$2"
+      shift 2
+      ;;
+    --url)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      REMOTE_VIEW_PUBLIC_URL="$2"
+      shift 2
+      ;;
+    --list)
+      ACTION="list"
+      shift
+      ;;
+    --rm)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      ACTION="rm"
+      ACTION_ARG="$2"
+      shift 2
+      ;;
+    --prune)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      ACTION="prune"
+      ACTION_ARG="$2"
+      shift 2
+      ;;
+    --check)
+      ACTION="check"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -)
+      INPUT_FILE="-"
+      shift
+      ;;
+    -*)
+      rv_die "unknown option: $1 (try --help)"
+      ;;
+    *)
+      INPUT_FILE="$1"
+      shift
+      ;;
+  esac
+done
+
+case "$ACTION" in
+  check) rv_run_check ;;
+  list)  rv_list_drops; exit 0 ;;
+  rm)    rv_remove_drop "$ACTION_ARG"; exit 0 ;;
+  prune) rv_prune_drops "$ACTION_ARG"; exit 0 ;;
+esac
+
+if [[ "$INPUT_FILE" != "-" && -d "$INPUT_FILE" ]]; then
+  exec "$SCRIPT_DIR/drop-dir" "${ORIG_ARGS[@]}"
+fi
+
+case "$THEME" in
+  dark|light|auto) ;;
+  *) rv_die "invalid --theme '$THEME' (expected dark, light, or auto)" ;;
+esac
+
+if [[ -n "$CUSTOM_ID" ]]; then
+  ID="$(rv_validate_slug "$CUSTOM_ID")"
+else
+  ID="$(rv_generate_id)"
+fi
+
+if [[ -z "$TITLE" ]]; then
+  TITLE="Drop ${ID}"
+fi
+
+GENERATED_AT="$(date '+%Y-%m-%d %H:%M')"
+TMP_IN="$(mktemp)"
+TMP_OUT="$(mktemp)"
+trap 'rm -f -- "$TMP_IN" "$TMP_OUT"' EXIT
+
+if [[ "$INPUT_FILE" == "-" ]]; then
+  if [[ -t 0 ]]; then
+    rv_die "no input provided on stdin and no file argument given (try --help)"
+  fi
+  cat > "$TMP_IN"
+else
+  [[ -r "$INPUT_FILE" ]] || rv_die "cannot read file: $INPUT_FILE"
+  cat -- "$INPUT_FILE" > "$TMP_IN"
+fi
+
+[[ -s "$TMP_IN" ]] || rv_die "input HTML is empty"
+
+# Auto-detect full HTML documents to avoid double-wrapping <html>
+if [[ "$RAW_MODE" -eq 0 ]]; then
+  first_nonempty="$(grep -m 1 -E '[^[:space:]]' "$TMP_IN" || true)"
+  if [[ "$first_nonempty" =~ ^[[:space:]]*\<(!DOCTYPE|!doctype|html|HTML)[[:space:]\>] ]]; then
+    RAW_MODE=1
+  fi
+fi
+
+if [[ "$RAW_MODE" -eq 1 ]]; then
+  cp -- "$TMP_IN" "$TMP_OUT"
+else
+  [[ -r "$REMOTE_VIEW_TEMPLATE" ]] || rv_die "template not found: $REMOTE_VIEW_TEMPLATE"
+  assemble_html "$REMOTE_VIEW_TEMPLATE" "$TMP_IN" "$TITLE" "$ID" "$GENERATED_AT" "$THEME" > "$TMP_OUT"
+fi
+
+if [[ "$STDOUT_MODE" -eq 1 ]]; then
+  cat -- "$TMP_OUT"
+  exit 0
+fi
+
+if [[ -n "$OUT_PATH" ]]; then
+  mkdir -p -- "$(dirname -- "$OUT_PATH")"
+  cp -- "$TMP_OUT" "$OUT_PATH"
+  echo "$OUT_PATH"
+  exit 0
+fi
+
+if [[ "$LOCAL_MODE" -eq 1 ]]; then
+  local_file="/tmp/remote-view-${ID}.html"
+  cp -- "$TMP_OUT" "$local_file"
+  echo "$local_file"
+  exit 0
+fi
+
+if ! rv_ssh "umask 022 && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR' && cat > '$REMOTE_VIEW_REMOTE_DIR/${ID}.html'" < "$TMP_OUT"; then
+  echo "drop-html: failed to upload to $REMOTE_VIEW_SSH_HOST:$REMOTE_VIEW_REMOTE_DIR/${ID}.html" >&2
+  echo "drop-html: run 'drop-html --check' to diagnose, or use '--local' for local output." >&2
+  exit 1
+fi
+
+echo "${REMOTE_VIEW_PUBLIC_URL%/}/${ID}.html"

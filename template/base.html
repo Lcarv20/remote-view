@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en" class="{{HTML_CLASS}}" data-default-theme="{{THEME_MODE}}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>{{TITLE}} · remote-view</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2360a5fa'/%3E%3C/svg%3E">
+
+  <!-- Enforce CSS cascade layer order BEFORE loading Tailwind v4 and Web Awesome -->
+  <style>
+    @layer theme, base, wa-native, wa-base, wa-utilities, wa-color-palette, wa-color-variant, wa-theme, wa-theme-dimension, wa-theme-overrides, components, utilities;
+  </style>
+
+  <!-- Prevent theme FOUC before first paint -->
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const params = new URLSearchParams(window.location.search);
+      const paramTheme = params.get("theme");
+      const savedTheme = (() => {
+        try { return localStorage.getItem("rv-theme"); } catch { return null; }
+      })();
+      const def = root.dataset.defaultTheme || "dark";
+      const resolved = (paramTheme === "light" || paramTheme === "dark")
+        ? paramTheme
+        : (savedTheme === "light" || savedTheme === "dark")
+          ? savedTheme
+          : (def === "auto"
+              ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+              : def);
+
+      root.classList.remove("wa-dark", "wa-light");
+      root.classList.add(resolved === "light" ? "wa-light" : "wa-dark");
+      root.dataset.theme = resolved;
+      root.style.colorScheme = resolved;
+    })();
+  </script>
+
+  <!-- Web Awesome 3 (Shoelace evolution) - parallel links avoid nested @import waterfall -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.14.0/dist-cdn/styles/layers.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.14.0/dist-cdn/styles/color/palettes/default.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.14.0/dist-cdn/styles/themes/default.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.14.0/dist-cdn/styles/native.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.14.0/dist-cdn/styles/utilities.css">
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.14.0/dist-cdn/webawesome.loader.js"></script>
+
+  <!-- Tailwind CSS v4 Play CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+  <!-- Highlight.js (dark + light theme stylesheets toggled dynamically) -->
+  <link id="rv-hljs-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/styles/tokyo-night-dark.min.css">
+  <link id="rv-hljs-light" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/styles/github.min.css" disabled>
+  <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/highlight.min.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.min.js"></script>
+  <script>
+    window.rvSyncHighlightTheme = (theme) => {
+      const darkLink = document.getElementById("rv-hljs-dark");
+      const lightLink = document.getElementById("rv-hljs-light");
+      if (darkLink) darkLink.disabled = theme === "light";
+      if (lightLink) lightLink.disabled = theme !== "light";
+    };
+
+    window.rvApplyChartTheme = (theme) => {
+      if (!window.Chart) return;
+      const isDark = theme !== "light";
+      const textColor = isDark ? "#cbd5e1" : "#334155";
+      const mutedColor = isDark ? "#94a3b8" : "#64748b";
+      const gridColor = isDark ? "rgba(148, 163, 184, 0.16)" : "rgba(51, 65, 85, 0.12)";
+
+      Chart.defaults.color = textColor;
+      Chart.defaults.borderColor = gridColor;
+      if (Chart.defaults.plugins?.legend?.labels) {
+        Chart.defaults.plugins.legend.labels.color = textColor;
+      }
+      if (Chart.defaults.scale?.ticks) {
+        Chart.defaults.scale.ticks.color = mutedColor;
+      }
+      if (Chart.defaults.scale?.grid) {
+        Chart.defaults.scale.grid.color = gridColor;
+      }
+
+      const instances = Chart.instances ? Object.values(Chart.instances) : [];
+      for (const chart of instances) {
+        if (chart?.options?.scales) {
+          for (const axis of Object.values(chart.options.scales)) {
+            if (axis.ticks) axis.ticks.color = mutedColor;
+            if (axis.grid) axis.grid.color = gridColor;
+          }
+        }
+        chart.update("none");
+      }
+    };
+
+    (() => {
+      const theme = document.documentElement.dataset.theme || "dark";
+      window.rvSyncHighlightTheme(theme);
+      window.rvApplyChartTheme(theme);
+    })();
+  </script>
+
+  <!-- KaTeX (optional math rendering for $$, \[, \() -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/contrib/auto-render.min.js"></script>
+
+  <style>
+    /* Prevent Tailwind Preflight's `* { border: 0 solid }` from flattening Web Awesome card borders,
+       and keep Web Awesome's internal `--spacing` variable from inflating Tailwind v4 spacing utilities inside slots. */
+    @layer wa-base {
+      :where(wa-card:not([appearance="plain"], [appearance="filled"], [appearance="accent"])) {
+        border: var(--wa-panel-border-width, 1px) var(--wa-panel-border-style, solid) var(--wa-color-surface-border);
+      }
+
+      :where(wa-card, wa-details, wa-callout, wa-dialog, wa-drawer, wa-tab-group, wa-tab-panel, wa-split-panel, wa-page, wa-popover) > * {
+        --spacing: 0.25rem;
+      }
+    }
+
+    @layer components {
+      :root {
+        --rv-bg: light-dark(#f8fafc, #09090b);
+        --rv-surface: light-dark(#ffffff, #111115);
+        --rv-surface-subtle: light-dark(#f1f5f9, #18181d);
+        --rv-border: light-dark(#e2e8f0, #27272f);
+        --rv-text: light-dark(#0f172a, #f4f4f5);
+        --rv-text-muted: light-dark(#64748b, #a1a1aa);
+        --rv-code-bg: light-dark(#f8fafc, #1a1b26);
+        --rv-accent: light-dark(#2563eb, #60a5fa);
+        --rv-scrollbar-track: light-dark(#f1f5f9, #111115);
+        --rv-scrollbar-thumb: light-dark(#cbd5e1, #3f3f46);
+        color-scheme: light dark;
+        scrollbar-color: var(--rv-scrollbar-thumb) var(--rv-scrollbar-track);
+      }
+
+      html.wa-dark {
+        --rv-bg: #09090b;
+        --rv-surface: #111115;
+        --rv-surface-subtle: #18181d;
+        --rv-border: #27272f;
+        --rv-text: #f4f4f5;
+        --rv-text-muted: #a1a1aa;
+        --rv-code-bg: #1a1b26;
+        --rv-accent: #60a5fa;
+        --rv-scrollbar-track: #111115;
+        --rv-scrollbar-thumb: #3f3f46;
+        color-scheme: dark;
+      }
+
+      html.wa-light {
+        --rv-bg: #f8fafc;
+        --rv-surface: #ffffff;
+        --rv-surface-subtle: #f1f5f9;
+        --rv-border: #e2e8f0;
+        --rv-text: #0f172a;
+        --rv-text-muted: #64748b;
+        --rv-code-bg: #f8fafc;
+        --rv-accent: #2563eb;
+        --rv-scrollbar-track: #f1f5f9;
+        --rv-scrollbar-thumb: #cbd5e1;
+        color-scheme: light;
+      }
+
+      html,
+      body {
+        background-color: var(--rv-bg);
+        color: var(--rv-text);
+        min-height: 100%;
+        margin: 0;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .rv-topbar {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        background: color-mix(in srgb, var(--rv-bg) 82%, transparent);
+        border-bottom: 1px solid var(--rv-border);
+      }
+
+      .rv-topbar-inner {
+        max-width: 72rem;
+        margin: 0 auto;
+        padding: 0.625rem clamp(1rem, 3.5vw, 2rem);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      .rv-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        min-width: 0;
+      }
+
+      .rv-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 9999px;
+        background: var(--rv-accent);
+        flex-shrink: 0;
+        box-shadow: 0 0 10px color-mix(in srgb, var(--rv-accent) 60%, transparent);
+      }
+
+      .rv-doc-title {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--rv-text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .rv-doc-meta {
+        font-size: 0.75rem;
+        color: var(--rv-text-muted);
+        white-space: nowrap;
+        font-family: var(--wa-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+      }
+
+      @media (max-width: 640px) {
+        .rv-doc-meta {
+          display: none;
+        }
+      }
+
+      .rv-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        flex-shrink: 0;
+      }
+
+      .rv-icon-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        height: 1.875rem;
+        padding: 0 0.625rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--rv-border);
+        background: var(--rv-surface);
+        color: var(--rv-text-muted);
+        font-size: 0.75rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+      }
+
+      .rv-icon-btn:hover {
+        color: var(--rv-text);
+        background: var(--rv-surface-subtle);
+      }
+
+      .rv-icon-btn:focus-visible {
+        outline: 2px solid var(--rv-accent);
+        outline-offset: 2px;
+      }
+
+      .rv-main {
+        max-width: 72rem;
+        margin: 0 auto;
+        padding: clamp(1.25rem, 3.5vw, 2.25rem) clamp(1rem, 3.5vw, 2rem) 4.5rem;
+      }
+
+      .rv-main > * + * {
+        margin-top: 1.25rem;
+      }
+
+      .rv-muted {
+        color: var(--rv-text-muted);
+      }
+
+      /* Readable prose & native HTML defaults inside main */
+      .rv-main h1 {
+        font-size: clamp(1.625rem, 3vw, 2.25rem);
+        font-weight: 700;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        margin: 0;
+      }
+
+      .rv-main h2 {
+        font-size: clamp(1.25rem, 2.2vw, 1.5rem);
+        font-weight: 650;
+        line-height: 1.3;
+        letter-spacing: -0.01em;
+        margin-top: 2rem;
+      }
+
+      .rv-main h3 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        line-height: 1.35;
+      }
+
+      .rv-main p {
+        line-height: 1.65;
+      }
+
+      .rv-main ul,
+      .rv-main ol {
+        padding-left: 1.375rem;
+        line-height: 1.65;
+      }
+
+      .rv-main ul {
+        list-style-type: disc;
+      }
+
+      .rv-main ol {
+        list-style-type: decimal;
+      }
+
+      .rv-main li + li {
+        margin-top: 0.25rem;
+      }
+
+      .rv-main :not(pre) > code {
+        font-family: var(--wa-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+        font-size: 0.875em;
+        padding: 0.15em 0.4em;
+        border-radius: 0.375rem;
+        background: var(--rv-surface-subtle);
+        border: 1px solid var(--rv-border);
+      }
+
+      .rv-main kbd {
+        font-family: var(--wa-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+        font-size: 0.8em;
+        padding: 0.12em 0.42em;
+        border-radius: 0.35rem;
+        border: 1px solid var(--rv-border);
+        background: var(--rv-surface-subtle);
+        box-shadow: inset 0 -1px 0 var(--rv-border);
+      }
+
+      .rv-main blockquote {
+        margin-left: 0;
+        padding: 0.5rem 1rem;
+        border-left: 3px solid var(--rv-accent);
+        background: var(--rv-surface-subtle);
+        border-radius: 0 0.5rem 0.5rem 0;
+        color: var(--rv-text-muted);
+      }
+
+      .rv-main hr {
+        border: 0;
+        border-top: 1px solid var(--rv-border);
+        margin: 1.75rem 0;
+      }
+
+      /* Code blocks */
+      .rv-code-wrap {
+        position: relative;
+        border: 1px solid var(--rv-border);
+        border-radius: 0.75rem;
+        background: var(--rv-code-bg);
+        overflow: hidden;
+      }
+
+      .rv-code-wrap pre {
+        margin: 0;
+        padding: 1rem 4.25rem 1rem 1.125rem;
+        overflow-x: auto;
+        font-size: 0.875rem;
+        line-height: 1.6;
+        background: transparent;
+      }
+
+      /* Chart.js responsive containers require a positioned parent */
+      :where(.rv-main div:has(> canvas)) {
+        position: relative;
+      }
+
+      .rv-code-wrap pre code.hljs {
+        background: transparent;
+        padding: 0;
+      }
+
+      .rv-copy-code {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        z-index: 2;
+        padding: 0.2rem 0.55rem;
+        border-radius: 0.375rem;
+        border: 1px solid var(--rv-border);
+        background: color-mix(in srgb, var(--rv-surface) 90%, transparent);
+        color: var(--rv-text-muted);
+        font-size: 0.7rem;
+        font-weight: 500;
+        cursor: pointer;
+        opacity: 0.85;
+        transition: opacity 0.15s ease, color 0.15s ease;
+      }
+
+      .rv-copy-code:hover {
+        opacity: 1;
+        color: var(--rv-text);
+      }
+
+      /* Tables */
+      .rv-table-wrap {
+        overflow-x: auto;
+        max-inline-size: 100%;
+        border: 1px solid var(--rv-border);
+        border-radius: 0.75rem;
+        background: var(--rv-surface);
+      }
+
+      .rv-main table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+        text-align: left;
+      }
+
+      .rv-main thead th {
+        background: var(--rv-surface-subtle);
+        font-weight: 600;
+        color: var(--rv-text);
+        border-bottom: 1px solid var(--rv-border);
+        padding: 0.65rem 0.9rem;
+        white-space: nowrap;
+      }
+
+      .rv-main tbody td,
+      .rv-main tbody th {
+        padding: 0.625rem 0.9rem;
+        border-bottom: 1px solid var(--rv-border);
+        vertical-align: top;
+      }
+
+      .rv-main tbody tr:last-child td,
+      .rv-main tbody tr:last-child th {
+        border-bottom: 0;
+      }
+
+      .rv-main tbody tr:hover {
+        background: color-mix(in srgb, var(--rv-surface-subtle) 55%, transparent);
+      }
+
+      /* Mermaid diagrams */
+      pre.mermaid {
+        background: var(--rv-surface);
+        border: 1px solid var(--rv-border);
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+        display: flex;
+        justify-content: center;
+        overflow-x: auto;
+        margin: 0;
+      }
+
+      pre.mermaid svg {
+        max-width: 100%;
+        height: auto;
+      }
+
+      /* Native details */
+      .rv-main details:not(wa-details) {
+        border: 1px solid var(--rv-border);
+        border-radius: 0.75rem;
+        background: var(--rv-surface);
+        padding: 0.75rem 1rem;
+      }
+
+      .rv-main details:not(wa-details) > summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      .rv-main details:not(wa-details)[open] > summary {
+        margin-bottom: 0.75rem;
+      }
+    }
+
+    /* Unlayered override so Highlight.js theme background/padding don't clash with .rv-code-wrap */
+    .rv-code-wrap pre code.hljs {
+      background: transparent;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+  <header class="rv-topbar">
+    <div class="rv-topbar-inner">
+      <div class="rv-brand">
+        <span class="rv-dot" aria-hidden="true"></span>
+        <span class="rv-doc-title">{{TITLE}}</span>
+        <span class="rv-doc-meta">{{DROP_ID}} · {{GENERATED_AT}}</span>
+      </div>
+      <div class="rv-actions">
+        <button type="button" class="rv-icon-btn" id="rv-copy-url" aria-label="Copy page URL">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <span id="rv-copy-url-label">Copy URL</span>
+        </button>
+        <button type="button" class="rv-icon-btn" id="rv-theme-toggle" aria-label="Toggle color theme">
+          <svg id="rv-icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+          </svg>
+          <svg id="rv-icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" hidden>
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+          <span id="rv-theme-label">Light</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="rv-content" class="rv-main wa-cloak">
+{{CONTENT}}
+  </main>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.esm.min.mjs";
+
+    const root = document.documentElement;
+    const sunIcon = document.getElementById("rv-icon-sun");
+    const moonIcon = document.getElementById("rv-icon-moon");
+    const themeLabel = document.getElementById("rv-theme-label");
+    const themeToggle = document.getElementById("rv-theme-toggle");
+    const copyUrlBtn = document.getElementById("rv-copy-url");
+    const copyUrlLabel = document.getElementById("rv-copy-url-label");
+
+    function updateThemeButton(theme) {
+      const isDark = theme !== "light";
+      if (sunIcon) sunIcon.hidden = !isDark;
+      if (moonIcon) moonIcon.hidden = isDark;
+      if (themeLabel) themeLabel.textContent = isDark ? "Light" : "Dark";
+    }
+
+    async function renderMermaid(theme) {
+      const nodes = Array.from(document.querySelectorAll("pre.mermaid, .mermaid"));
+      if (!nodes.length) return;
+
+      for (const el of nodes) {
+        if (!el.dataset.mermaidSrc) {
+          el.dataset.mermaidSrc = el.textContent.trim();
+        } else {
+          el.removeAttribute("data-processed");
+          el.textContent = el.dataset.mermaidSrc;
+        }
+      }
+
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: theme === "light" ? "default" : "dark",
+        securityLevel: "loose"
+      });
+      await mermaid.run({ nodes });
+    }
+
+    async function applyTheme(theme, persist = false) {
+      root.classList.remove("wa-dark", "wa-light");
+      root.classList.add(theme === "light" ? "wa-light" : "wa-dark");
+      root.dataset.theme = theme;
+      root.style.colorScheme = theme;
+      if (persist) {
+        try { localStorage.setItem("rv-theme", theme); } catch {}
+      }
+      updateThemeButton(theme);
+      window.rvSyncHighlightTheme?.(theme);
+      window.rvApplyChartTheme?.(theme);
+      await renderMermaid(theme);
+    }
+
+    // Highlight code blocks and attach accessible wrappers + copy buttons
+    for (const codeEl of document.querySelectorAll("pre > code")) {
+      const pre = codeEl.parentElement;
+      if (!pre || pre.classList.contains("mermaid")) continue;
+
+      if (window.hljs && !codeEl.classList.contains("hljs")) {
+        window.hljs.highlightElement(codeEl);
+      }
+
+      if (!pre.hasAttribute("tabindex")) pre.setAttribute("tabindex", "0");
+      if (!pre.hasAttribute("role")) pre.setAttribute("role", "region");
+      if (!pre.hasAttribute("aria-label") && !pre.hasAttribute("aria-labelledby")) {
+        pre.setAttribute("aria-label", "Code block");
+      }
+
+      if (!pre.parentElement?.classList.contains("rv-code-wrap")) {
+        const wrap = document.createElement("div");
+        wrap.className = "rv-code-wrap";
+        pre.parentNode.insertBefore(wrap, pre);
+        wrap.appendChild(pre);
+
+        const copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.className = "rv-copy-code";
+        copyBtn.textContent = "Copy";
+        copyBtn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(codeEl.innerText);
+            copyBtn.textContent = "Copied";
+            setTimeout(() => { copyBtn.textContent = "Copy"; }, 1400);
+          } catch {
+            copyBtn.textContent = "Failed";
+            setTimeout(() => { copyBtn.textContent = "Copy"; }, 1400);
+          }
+        });
+        wrap.appendChild(copyBtn);
+      }
+    }
+
+    // Wrap bare tables in responsive horizontal scrollers
+    for (const table of document.querySelectorAll("#rv-content table")) {
+      if (table.closest(".rv-table-wrap, .table-wrapper")) continue;
+      const wrap = document.createElement("div");
+      wrap.className = "rv-table-wrap";
+      wrap.setAttribute("tabindex", "0");
+      wrap.setAttribute("role", "region");
+      wrap.setAttribute("aria-label", table.querySelector("caption")?.textContent?.trim() || "Data table");
+      table.parentNode.insertBefore(wrap, table);
+      wrap.appendChild(table);
+    }
+
+    // Render KaTeX math if loaded
+    if (window.renderMathInElement) {
+      window.renderMathInElement(document.getElementById("rv-content"), {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "\\[", right: "\\]", display: true },
+          { left: "\\(", right: "\\)", display: false }
+        ],
+        throwOnError: false
+      });
+    }
+
+    const currentTheme = root.dataset.theme || "dark";
+    updateThemeButton(currentTheme);
+    await renderMermaid(currentTheme);
+
+    themeToggle?.addEventListener("click", () => {
+      const next = (root.dataset.theme === "light") ? "dark" : "light";
+      applyTheme(next, true);
+    });
+
+    document.addEventListener("wa-tab-show", () => {
+      if (!window.Chart?.instances) return;
+      for (const chart of Object.values(Chart.instances)) {
+        chart.resize();
+      }
+    });
+
+    // Re-fit Chart.js instances once Tailwind Play CDN injects utility rules
+    requestAnimationFrame(() => {
+      if (!window.Chart?.instances) return;
+      for (const chart of Object.values(Chart.instances)) {
+        chart.resize();
+      }
+    });
+
+    copyUrlBtn?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        if (copyUrlLabel) copyUrlLabel.textContent = "Copied";
+        setTimeout(() => { if (copyUrlLabel) copyUrlLabel.textContent = "Copy URL"; }, 1400);
+      } catch {
+        if (copyUrlLabel) copyUrlLabel.textContent = "Copy failed";
+        setTimeout(() => { if (copyUrlLabel) copyUrlLabel.textContent = "Copy URL"; }, 1400);
+      }
+    });
+  </script>
+</body>
+</html>

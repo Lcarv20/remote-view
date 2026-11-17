@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RV_PROG="drop-dir"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
+  _src="$(readlink -- "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
+
+# shellcheck source=bin/remote-view-common.sh
+source "$SCRIPT_DIR/remote-view-common.sh"
+REPO_DIR="$(cd -P -- "$SCRIPT_DIR/.." && pwd)"
+rv_load_config "$REPO_DIR"
+
+usage() {
+  cat <<'EOF'
+Usage: drop-dir [OPTIONS] <DIR>
+
+Upload a static site or build output directory (e.g. dist/, build/, out/)
+to the remote-view server and print its URL (<base-url>/<id>/).
+
+Options:
+  -i, --id <slug>          Custom directory slug (default: random 6-char ID;
+                           re-using a slug replaces that directory cleanly)
+      --local              Copy directory to /tmp/remote-view-<id>/ (no SSH)
+  -o, --out <path>         Copy directory to <path> instead of uploading
+      --host <user@host>   Override SSH target (default: $REMOTE_VIEW_SSH_HOST)
+      --url <base-url>     Override public base URL (default: $REMOTE_VIEW_PUBLIC_URL)
+      --no-warn-base       Suppress root-relative asset path hint
+      --list               List published drops on the Pi
+      --rm <id>            Delete <id>/ or <id>.html from the Pi
+      --prune <days>       Delete drops older than <days> days on the Pi
+      --check              Verify template, mDNS/DNS, SSH auth, remote dir, and HTTP server
+  -h, --help               Show this help
+EOF
+}
+
+CUSTOM_ID=""
+LOCAL_MODE=0
+OUT_PATH=""
+WARN_BASE=1
+SRC_DIR=""
+ACTION="publish"
+ACTION_ARG=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i|--id)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      CUSTOM_ID="$2"
+      shift 2
+      ;;
+    --local)
+      LOCAL_MODE=1
+      shift
+      ;;
+    -o|--out)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      OUT_PATH="$2"
+      shift 2
+      ;;
+    --host)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      REMOTE_VIEW_SSH_HOST="$2"
+      shift 2
+      ;;
+    --url)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      REMOTE_VIEW_PUBLIC_URL="$2"
+      shift 2
+      ;;
+    --no-warn-base)
+      WARN_BASE=0
+      shift
+      ;;
+    --list)
+      ACTION="list"
+      shift
+      ;;
+    --rm)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      ACTION="rm"
+      ACTION_ARG="$2"
+      shift 2
+      ;;
+    --prune)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      ACTION="prune"
+      ACTION_ARG="$2"
+      shift 2
+      ;;
+    --check)
+      ACTION="check"
+      shift
+      ;;
+    # Ignore -t/--title or --theme gracefully if delegated from drop-html
+    -t|--title|--theme)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      rv_die "unknown option: $1 (try --help)"
+      ;;
+    *)
+      [[ -z "$SRC_DIR" ]] || rv_die "unexpected extra argument: $1"
+      SRC_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+case "$ACTION" in
+  check) rv_run_check ;;
+  list)  rv_list_drops; exit 0 ;;
+  rm)    rv_remove_drop "$ACTION_ARG"; exit 0 ;;
+  prune) rv_prune_drops "$ACTION_ARG"; exit 0 ;;
+esac
+
+[[ -n "$SRC_DIR" ]] || rv_die "missing directory path (try --help)"
+[[ -d "$SRC_DIR" ]] || rv_die "not a directory: $SRC_DIR"
+
+if [[ -n "$CUSTOM_ID" ]]; then
+  ID="$(rv_validate_slug "$CUSTOM_ID")"
+else
+  ID="$(rv_generate_id)"
+fi
+
+if [[ "$WARN_BASE" -eq 1 && -r "$SRC_DIR/index.html" ]]; then
+  if grep -Eq '(src|href)=["'\'']/[^/]' "$SRC_DIR/index.html"; then
+    echo "drop-dir: note: index.html references root-relative paths (e.g. '/assets/...'); since drops are served at '/${ID}/', build with a relative base (such as '--base=./') if assets fail to load." >&2
+  fi
+fi
+
+if [[ -n "$OUT_PATH" ]]; then
+  rm -rf -- "$OUT_PATH"
+  mkdir -p -- "$OUT_PATH"
+  tar -C "$SRC_DIR" -cf - . | tar -C "$OUT_PATH" -xf -
+  echo "$OUT_PATH"
+  exit 0
+fi
+
+if [[ "$LOCAL_MODE" -eq 1 ]]; then
+  local_dir="/tmp/remote-view-${ID}"
+  rm -rf -- "$local_dir"
+  mkdir -p -- "$local_dir"
+  tar -C "$SRC_DIR" -cf - . | tar -C "$local_dir" -xf -
+  echo "$local_dir"
+  exit 0
+fi
+
+if ! tar -C "$SRC_DIR" -cf - . | rv_ssh "umask 022 && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR' && rm -rf -- '$REMOTE_VIEW_REMOTE_DIR/${ID}' && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR/${ID}' && tar -C '$REMOTE_VIEW_REMOTE_DIR/${ID}' -xf - && chmod -R a+rX -- '$REMOTE_VIEW_REMOTE_DIR/${ID}'"; then
+  echo "drop-dir: failed to upload '$SRC_DIR' to $REMOTE_VIEW_SSH_HOST:$REMOTE_VIEW_REMOTE_DIR/${ID}/" >&2
+  echo "drop-dir: run 'drop-dir --check' to diagnose, or use '--local' for local copy." >&2
+  exit 1
+fi
+
+echo "${REMOTE_VIEW_PUBLIC_URL%/}/${ID}/"
