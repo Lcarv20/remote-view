@@ -438,17 +438,378 @@ async function initCodeBlocks() {
   await Promise.all(jobs);
 }
 
-function initTables() {
-  for (const table of document.querySelectorAll("#rv-main table")) {
-    if (table.closest(".rv-table-wrap, .table-wrapper")) continue;
-    const wrap = document.createElement("div");
-    wrap.className = "rv-table-wrap";
-    wrap.setAttribute("tabindex", "0");
-    wrap.setAttribute("role", "region");
-    wrap.setAttribute("aria-label", table.querySelector("caption")?.textContent?.trim() || "Data table");
-    table.parentNode.insertBefore(wrap, table);
-    wrap.appendChild(table);
+const RV_TABLE_ICONS = {
+  table: '<path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14" /><path d="M3 10h18" /><path d="M10 3v18" />',
+  cards: '<path d="M4 5a1 1 0 0 1 1 -1h14a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-14a1 1 0 0 1 -1 -1v-4" /><path d="M4 15a1 1 0 0 1 1 -1h14a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-14a1 1 0 0 1 -1 -1v-4" />'
+};
+
+const RV_NUMERIC_CELL_RE = /^[~≈<>≤≥+\-−]?[$€£¥]?[\d.,]+(?:\s*(?:%|ms|us|µs|ns|s|m|h|d|k|M|B|KB|MB|GB|TB|KiB|MiB|GiB|px|rem|em|vw|vh|rps|ops\/s|req\/s|x|×))?$/i;
+
+function normalizeTableText(el) {
+  return (el?.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function setDataAttrIfChanged(el, key, value) {
+  if (el.dataset[key] !== value) {
+    el.dataset[key] = value;
   }
+}
+
+/** Inspect table structure, header labels, and whether row cells map 1:1 to columns. */
+function analyzeTableStructure(table) {
+  const headRows = table.tHead ? Array.from(table.tHead.rows) : [];
+  const bodyRows = Array.from(table.tBodies).flatMap((b) => Array.from(b.rows));
+  const footRows = table.tFoot ? Array.from(table.tFoot.rows) : [];
+  const allRows = [...headRows, ...bodyRows, ...footRows];
+
+  let colCount = 0;
+  for (const row of allRows) {
+    let spanSum = 0;
+    for (const cell of row.cells) spanSum += cell.colSpan || 1;
+    if (spanSum > colCount) colCount = spanSum;
+  }
+
+  const lastHeadRow = headRows.length ? headRows[headRows.length - 1] : null;
+  const headerIsFlat = Boolean(
+    lastHeadRow &&
+    lastHeadRow.cells.length === colCount &&
+    Array.from(lastHeadRow.cells).every((c) => (c.colSpan || 1) === 1 && (c.rowSpan || 1) === 1)
+  );
+  const labels = headerIsFlat ? Array.from(lastHeadRow.cells).map(normalizeTableText) : [];
+
+  const rowsMapFlat = [...bodyRows, ...footRows].every(
+    (row) =>
+      row.cells.length === colCount &&
+      Array.from(row.cells).every((c) => (c.colSpan || 1) === 1 && (c.rowSpan || 1) === 1)
+  );
+  const hasComplexSpans = !rowsMapFlat || (Boolean(lastHeadRow) && !headerIsFlat);
+
+  const firstFullBodyRow = bodyRows.find(
+    (row) =>
+      row.cells.length === colCount &&
+      Array.from(row.cells).every((c) => (c.colSpan || 1) === 1 && (c.rowSpan || 1) === 1)
+  ) || null;
+
+  const sizingCells = headerIsFlat
+    ? Array.from(lastHeadRow.cells)
+    : (firstFullBodyRow ? Array.from(firstFullBodyRow.cells) : []);
+  const firstColCell = sizingCells[0] || null;
+  const isCardable = headerIsFlat && colCount >= 2 && labels.some(Boolean) && !hasComplexSpans;
+
+  return {
+    caption: table.querySelector("caption"),
+    bodyRows,
+    footRows,
+    colCount,
+    labels,
+    sizingCells,
+    firstColCell,
+    hasComplexSpans,
+    isCardable
+  };
+}
+
+/** Estimate readable minimum column widths from cell content and inject card-view header labels. */
+function applySmartColumnSizing(table, info) {
+  const { colCount, labels, bodyRows, footRows, sizingCells, isCardable } = info;
+  if (!colCount) return;
+
+  const flatDataRows = bodyRows.filter(
+    (row) =>
+      row.cells.length === colCount &&
+      Array.from(row.cells).every((c) => (c.colSpan || 1) === 1 && (c.rowSpan || 1) === 1)
+  );
+
+  if (sizingCells.length === colCount) {
+    let totalRem = 0;
+
+    for (let col = 0; col < colCount; col++) {
+      const headerText = labels[col] || "";
+      const headerLen = headerText.length;
+      const headerLongestWord = headerText
+        ? Math.max(...headerText.split(/\s+/).map((w) => w.length))
+        : 0;
+
+      const lengths = [];
+      const proseLengths = [];
+      let maxWordLen = 0;
+      let maxTokenLen = 0;
+      let numericCount = 0;
+
+      for (const row of flatDataRows) {
+        const text = normalizeTableText(row.cells[col]);
+        if (!text) continue;
+        lengths.push(text.length);
+        let proseLen = 0;
+        for (const token of text.split(/\s+/)) {
+          if (token.length > maxTokenLen) maxTokenLen = token.length;
+          // Cap normal-word floor so short English words never split mid-word while huge URLs still wrap.
+          if (token.length <= 22 && token.length > maxWordLen) maxWordLen = token.length;
+          proseLen += Math.min(token.length, 20) + 1;
+        }
+        proseLengths.push(Math.max(0, proseLen - 1));
+        if (RV_NUMERIC_CELL_RE.test(text) || (text.length <= 10 && /\d/.test(text) && !/\s.*\s/.test(text))) {
+          numericCount++;
+        }
+      }
+
+      lengths.sort((a, b) => a - b);
+      proseLengths.sort((a, b) => a - b);
+      const nonEmptyCount = lengths.length;
+      const p75Raw = nonEmptyCount ? lengths[Math.min(nonEmptyCount - 1, Math.floor(nonEmptyCount * 0.75))] : 0;
+      const maxLenRaw = nonEmptyCount ? lengths[nonEmptyCount - 1] : 0;
+      const p75Prose = nonEmptyCount ? proseLengths[Math.min(nonEmptyCount - 1, Math.floor(nonEmptyCount * 0.75))] : 0;
+      const maxProse = nonEmptyCount ? proseLengths[nonEmptyCount - 1] : 0;
+      const effLen = Math.max(p75Prose, Math.min(maxProse, p75Prose * 1.35 + 10));
+      const isMostlyNumeric = nonEmptyCount > 0 && (numericCount / nonEmptyCount) >= 0.7 && maxLenRaw <= 18;
+
+      const wordFloor = headerLongestWord * 0.56 + 1.85;
+      const headerFloor = headerLen <= 22
+        ? Math.max(wordFloor, Math.min(13.5, headerLen * 0.49 + 1.85))
+        : Math.max(wordFloor, Math.min(14.5, headerLen * 0.28 + 2.1));
+
+      const normalWordFloor = maxWordLen ? (maxWordLen * 0.52 + 1.85) : 0;
+      const tokenFloor = maxTokenLen > 14 ? Math.min(15.5, maxTokenLen * 0.44 + 1.9) : 0;
+
+      let proseFloor;
+      if (isMostlyNumeric) {
+        proseFloor = Math.max(4.75, Math.min(9.5, Math.max(p75Raw, maxLenRaw) * 0.52 + 1.9));
+      } else if (effLen <= 14) {
+        proseFloor = Math.max(5.5, effLen * 0.46 + 1.9);
+      } else if (effLen <= 32) {
+        proseFloor = 8.3 + (effLen - 14) * 0.23;
+      } else if (effLen <= 70) {
+        proseFloor = 12.4 + (effLen - 32) * 0.145;
+      } else {
+        proseFloor = Math.min(18.5, 17.0 + (effLen - 70) * 0.045);
+      }
+
+      const bodyFloor = Math.max(normalWordFloor, tokenFloor, proseFloor);
+      const colMinRem = Math.max(4.75, Math.min(19.0, Math.max(headerFloor, bodyFloor)));
+      totalRem += colMinRem;
+
+      sizingCells[col].setAttribute("data-rv-col-min", "");
+      sizingCells[col].style.setProperty("--rv-col-min", `${colMinRem.toFixed(2)}rem`);
+    }
+
+    table.style.setProperty("--rv-table-min", `${totalRem.toFixed(2)}rem`);
+  }
+
+  if (isCardable) {
+    for (const row of [...bodyRows, ...footRows]) {
+      for (let col = 0; col < colCount; col++) {
+        const label = labels[col];
+        if (!label) continue;
+        const cell = row.cells[col];
+        cell.setAttribute("data-rv-label", "");
+        cell.style.setProperty("--rv-label", JSON.stringify(label));
+      }
+    }
+  }
+}
+
+function createTableModeButton(mode, text, iconMarkup, pressed) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "rv-table-mode-btn";
+  btn.dataset.tableViewMode = mode;
+  btn.setAttribute("aria-pressed", pressed ? "true" : "false");
+  btn.append(buildTablerSvg(iconMarkup), Object.assign(document.createElement("span"), { textContent: text }));
+  return btn;
+}
+
+function buildTableShell(table, info, index) {
+  const existingWrap = table.parentElement?.classList.contains("rv-table-wrap")
+    ? table.parentElement
+    : null;
+  const wrap = existingWrap || document.createElement("div");
+  if (!existingWrap) {
+    wrap.className = "rv-table-wrap";
+    table.parentNode.insertBefore(wrap, table);
+  }
+  wrap.setAttribute("data-rv-table", "");
+  wrap.dataset.view = "table";
+
+  const inheritedLabel = existingWrap?.getAttribute("aria-label") || "";
+  const inheritedLabelledBy = existingWrap?.getAttribute("aria-labelledby") || "";
+  if (existingWrap) {
+    existingWrap.removeAttribute("tabindex");
+    existingWrap.removeAttribute("role");
+    existingWrap.removeAttribute("aria-label");
+    existingWrap.removeAttribute("aria-labelledby");
+  }
+
+  const bar = document.createElement("div");
+  bar.className = "rv-table-bar";
+
+  const meta = document.createElement("div");
+  meta.className = "rv-table-meta";
+
+  const rowCount = info.bodyRows.length;
+  const dims = document.createElement("span");
+  dims.className = "rv-table-dims";
+  dims.textContent = `${info.colCount} ${info.colCount === 1 ? "col" : "cols"} · ${rowCount} ${rowCount === 1 ? "row" : "rows"}`;
+
+  const hintEl = document.createElement("span");
+  hintEl.className = "rv-table-hint";
+  hintEl.setAttribute("aria-hidden", "true");
+
+  meta.append(dims, hintEl);
+  bar.appendChild(meta);
+
+  let tableBtn = null;
+  let cardsBtn = null;
+  if (info.isCardable) {
+    const switchEl = document.createElement("div");
+    switchEl.className = "rv-table-switch";
+    switchEl.setAttribute("role", "group");
+    switchEl.setAttribute("aria-label", "Table view mode");
+    tableBtn = createTableModeButton("table", "Table", RV_TABLE_ICONS.table, true);
+    cardsBtn = createTableModeButton("cards", "Cards", RV_TABLE_ICONS.cards, false);
+    switchEl.append(tableBtn, cardsBtn);
+    bar.appendChild(switchEl);
+  }
+
+  const viewport = document.createElement("div");
+  viewport.className = "rv-table-viewport";
+
+  const scrollEl = document.createElement("div");
+  scrollEl.className = "rv-table-scroll";
+  scrollEl.setAttribute("tabindex", "0");
+  scrollEl.setAttribute("role", "region");
+
+  if (info.caption && normalizeTableText(info.caption)) {
+    if (!info.caption.id) info.caption.id = `rv-table-cap-${index}`;
+    scrollEl.setAttribute("aria-labelledby", info.caption.id);
+  } else if (inheritedLabelledBy) {
+    scrollEl.setAttribute("aria-labelledby", inheritedLabelledBy);
+  } else if (inheritedLabel) {
+    scrollEl.setAttribute("aria-label", inheritedLabel);
+  } else {
+    const preview = info.labels.filter(Boolean).slice(0, 4).join(", ");
+    scrollEl.setAttribute("aria-label", preview ? `Data table: ${preview}` : "Data table");
+  }
+
+  scrollEl.appendChild(table);
+  viewport.appendChild(scrollEl);
+  wrap.replaceChildren(bar, viewport);
+
+  return { wrap, viewport, scrollEl, hintEl, tableBtn, cardsBtn };
+}
+
+function initTables() {
+  const tableControllers = [];
+  let tableIndex = 0;
+
+  for (const table of document.querySelectorAll("#rv-main table")) {
+    if (table.dataset.rvTableInit === "1") continue;
+    if (table.closest(".table-wrapper, .mermaid, .katex")) continue;
+    if (table.parentElement?.closest("table")) continue;
+
+    table.dataset.rvTableInit = "1";
+    tableIndex++;
+
+    const info = analyzeTableStructure(table);
+    applySmartColumnSizing(table, info);
+    const refs = buildTableShell(table, info, tableIndex);
+    const { wrap, viewport, scrollEl, hintEl, tableBtn, cardsBtn } = refs;
+
+    const syncState = () => {
+      if (scrollEl.clientWidth === 0) return;
+
+      const isCards = wrap.dataset.view === "cards";
+      const tallCap = Math.min(512, Math.round(window.innerHeight * 0.7));
+      const isTall = !isCards && info.bodyRows.length >= 8 && table.offsetHeight > tallCap + 60;
+      setDataAttrIfChanged(wrap, "rvTall", isTall ? "true" : "false");
+
+      const maxScrollX = Math.max(0, scrollEl.scrollWidth - scrollEl.clientWidth);
+      const overflowX = !isCards && maxScrollX > 2;
+      const isRtl = getComputedStyle(scrollEl).direction === "rtl";
+      const posX = isRtl ? Math.abs(scrollEl.scrollLeft) : Math.max(0, scrollEl.scrollLeft);
+      const canScrollStart = overflowX && posX > 2;
+      const canScrollEnd = overflowX && posX < maxScrollX - 2;
+
+      const maxScrollY = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+      const overflowY = !isCards && maxScrollY > 2;
+      const canScrollTop = overflowY && scrollEl.scrollTop > 2;
+      const canScrollBottom = overflowY && scrollEl.scrollTop < maxScrollY - 2;
+
+      let stickyCol = false;
+      let stickyColW = 0;
+      if (!isCards && overflowX && info.colCount >= 3 && !info.hasComplexSpans && info.firstColCell) {
+        const col1W = info.firstColCell.getBoundingClientRect().width;
+        const vpW = scrollEl.clientWidth;
+        if (col1W > 0 && col1W <= Math.min(180, vpW * 0.40) && (vpW - col1W) >= 190) {
+          stickyCol = true;
+          stickyColW = Math.round(col1W);
+        }
+      }
+
+      setDataAttrIfChanged(wrap, "overflowX", overflowX ? "true" : "false");
+      setDataAttrIfChanged(wrap, "scrollStart", canScrollStart ? "true" : "false");
+      setDataAttrIfChanged(wrap, "scrollEnd", canScrollEnd ? "true" : "false");
+      setDataAttrIfChanged(wrap, "scrollTop", canScrollTop ? "true" : "false");
+      setDataAttrIfChanged(wrap, "scrollBottom", canScrollBottom ? "true" : "false");
+      setDataAttrIfChanged(wrap, "stickyCol", stickyCol ? "true" : "false");
+      viewport.style.setProperty("--rv-sticky-col-w", `${stickyColW}px`);
+
+      let hintText = "";
+      if (overflowX) {
+        if (canScrollStart && canScrollEnd) hintText = "← Scroll →";
+        else if (canScrollEnd) hintText = "Scroll →";
+        else if (canScrollStart) hintText = "← Scroll";
+      }
+      if (hintEl.textContent !== hintText) hintEl.textContent = hintText;
+    };
+
+    let rafId = 0;
+    const scheduleSync = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        syncState();
+      });
+    };
+
+    if (tableBtn && cardsBtn) {
+      const setViewMode = (mode) => {
+        if (wrap.dataset.view === mode) return;
+        wrap.dataset.view = mode;
+        tableBtn.setAttribute("aria-pressed", mode === "table" ? "true" : "false");
+        cardsBtn.setAttribute("aria-pressed", mode === "cards" ? "true" : "false");
+        if (mode === "table") scrollEl.scrollLeft = 0;
+        syncState();
+      };
+      tableBtn.addEventListener("click", () => setViewMode("table"));
+      cardsBtn.addEventListener("click", () => setViewMode("cards"));
+    }
+
+    scrollEl.addEventListener("scroll", scheduleSync, { passive: true });
+    tableControllers.push({ scrollEl, table, syncState, scheduleSync });
+    syncState();
+  }
+
+  if (!tableControllers.length) return;
+
+  if (typeof ResizeObserver !== "undefined") {
+    const syncByNode = new Map();
+    for (const ctrl of tableControllers) {
+      syncByNode.set(ctrl.scrollEl, ctrl.scheduleSync);
+      syncByNode.set(ctrl.table, ctrl.scheduleSync);
+    }
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) syncByNode.get(entry.target)?.();
+    });
+    for (const node of syncByNode.keys()) ro.observe(node);
+  }
+
+  window.addEventListener("resize", () => {
+    for (const ctrl of tableControllers) ctrl.scheduleSync();
+  }, { passive: true });
+
+  document.fonts?.ready?.then(() => {
+    for (const ctrl of tableControllers) ctrl.scheduleSync();
+  });
 }
 
 function initDetails() {
@@ -512,10 +873,27 @@ window.addEventListener("storage", (e) => {
   }
 });
 
+let copyUrlResetTimer;
 copyUrlBtn?.addEventListener("click", async () => {
   const ok = await copyText(window.location.href);
+  const iconEl = copyUrlBtn.querySelector("[data-icon]");
   if (copyUrlLabel) {
     copyUrlLabel.textContent = ok ? "Copied" : "Copy failed";
-    setTimeout(() => { copyUrlLabel.textContent = "Copy URL"; }, 1400);
   }
+  copyUrlBtn.dataset.copied = ok ? "true" : "false";
+  if (ok && iconEl) {
+    iconEl.dataset.iconHydrated = "";
+    iconEl.setAttribute("data-icon", "check");
+    hydrateIcons(copyUrlBtn);
+  }
+  clearTimeout(copyUrlResetTimer);
+  copyUrlResetTimer = setTimeout(() => {
+    if (copyUrlLabel) copyUrlLabel.textContent = "Copy URL";
+    delete copyUrlBtn.dataset.copied;
+    if (iconEl) {
+      iconEl.dataset.iconHydrated = "";
+      iconEl.setAttribute("data-icon", "copy");
+      hydrateIcons(copyUrlBtn);
+    }
+  }, 1400);
 });

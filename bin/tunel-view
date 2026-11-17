@@ -1,0 +1,1276 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RV_PROG="tunel-view"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
+  _src="$(readlink -- "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
+
+# shellcheck source=bin/remote-view-common.sh
+source "$SCRIPT_DIR/remote-view-common.sh"
+REPO_DIR="$(cd -P -- "$SCRIPT_DIR/.." && pwd)"
+rv_load_config "$REPO_DIR"
+
+LOCAL_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/remote-view"
+PI_REF_FILE="${LOCAL_CACHE_DIR}/tunel-view-pi.ref"
+
+usage() {
+  cat <<'EOF'
+Usage: tunel-view <COMMAND> [OPTIONS]
+
+Manage ephemeral Cloudflare Quick Tunnels (trycloudflare.com) for remote-view
+drops on the Pi or for local development servers.
+
+Commands:
+  up (start)    Reuse an active tunnel for the same target, or replace any prior tunnel
+  down (stop)   Spin down active tunnel(s) and remove state files
+  status        Show active tunnel status, URL, target, and remaining TTL (default)
+  url           Print active tunnel URL cleanly (exits non-zero if inactive)
+  logs (log)    Show recent cloudflared log lines
+
+Target Options:
+      --pi                  Target Raspberry Pi server (default for `up`)
+      --host <user@host>    Override SSH target (default: $REMOTE_VIEW_SSH_HOST)
+      --remote-port <port>  Override HTTP port on Pi (default: $REMOTE_VIEW_PORT or 80)
+  -s, --serve <path>        Serve a local HTML file or directory on 127.0.0.1 + tunnel it
+  -p, --port <port>         Tunnel local http://127.0.0.1:<port> via workstation cloudflared
+      --target <url>        Tunnel local URL (e.g. http://127.0.0.1:5173)
+      --local-url <url>     Alias for --target
+      --local               Select local tunnel scope (for down/status/url/logs)
+      --all                 Apply down/status to both local and Pi scopes
+      --restart, --fresh    Kill any matching active tunnel and force a fresh URL
+      --keep-other          Do not stop an active tunnel in the other scope (local vs pi)
+
+TTL & Output Options:
+      --ttl <duration>      Auto-expire tunnel after duration (default: 12h; e.g. 30s, 15m,
+                            12h, 2d, or seconds). Pass 0/none ONLY when explicitly requested.
+      --wait <seconds>      Max seconds to wait for trycloudflare URL on up (default: 25)
+  -n, --lines <count>       Number of log lines for `logs` (default: 50)
+      --json                Emit JSON output (for up, down, status, url)
+  -h, --help                Show this help
+
+Examples:
+  tunel-view up
+  TUNNEL_URL="$(tunel-view up)" && drop-html --url "$TUNNEL_URL" ...
+  tunel-view up --port 5173
+  tunel-view status
+  tunel-view down
+EOF
+}
+
+parse_ttl_seconds() {
+  local raw="$1"
+  local lower
+  lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$lower" in
+    0|0s|0m|0h|0d|none|off|unlimited)
+      printf '0'
+      return 0
+      ;;
+  esac
+  if [[ "$lower" =~ ^([1-9][0-9]*)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ "$lower" =~ ^([1-9][0-9]*)s$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ "$lower" =~ ^([1-9][0-9]*)m$ ]]; then
+    printf '%s' "$(( ${BASH_REMATCH[1]} * 60 ))"
+  elif [[ "$lower" =~ ^([1-9][0-9]*)h$ ]]; then
+    printf '%s' "$(( ${BASH_REMATCH[1]} * 3600 ))"
+  elif [[ "$lower" =~ ^([1-9][0-9]*)d$ ]]; then
+    printf '%s' "$(( ${BASH_REMATCH[1]} * 86400 ))"
+  else
+    rv_die "invalid --ttl '$raw' (expected e.g. 30s, 15m, 12h, 2d, seconds, or 0/none)"
+  fi
+}
+
+validate_port() {
+  local val="$1" flag="$2"
+  [[ "$val" =~ ^[0-9]+$ ]] && (( val >= 1 && val <= 65535 )) || \
+    rv_die "invalid $flag '$val' (expected integer 1..65535)"
+}
+
+validate_positive_int() {
+  local val="$1" flag="$2"
+  [[ "$val" =~ ^[1-9][0-9]*$ ]] || rv_die "invalid $flag '$val' (expected positive integer)"
+}
+
+validate_target_url() {
+  local val="$1"
+  [[ "$val" =~ ^https?://[^[:space:]]+$ ]] || \
+    rv_die "invalid target URL '$val' (expected http://... or https://...)"
+}
+
+format_duration() {
+  local secs="$1"
+  if (( secs <= 0 )); then
+    printf '0s'
+    return 0
+  fi
+  local d=$(( secs / 86400 ))
+  local h=$(( (secs % 86400) / 3600 ))
+  local m=$(( (secs % 3600) / 60 ))
+  local s=$(( secs % 60 ))
+  if (( d > 0 )); then
+    printf '%dd%dh' "$d" "$h"
+  elif (( h > 0 )); then
+    printf '%dh%dm' "$h" "$m"
+  elif (( m > 0 )); then
+    printf '%dm%ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+read_kv_file_key() {
+  local file="$1" key="$2" line
+  [[ -r "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s' "${line#*=}"
+      return 0
+    fi
+  done < "$file"
+}
+
+save_pi_ref() {
+  local host="$1" expires_epoch="$2" url="$3" target="$4"
+  mkdir -p -- "$LOCAL_CACHE_DIR"
+  local tmp_ref
+  tmp_ref="$(mktemp "${PI_REF_FILE}.XXXXXX")"
+  cat > "$tmp_ref" <<EOF
+SSH_HOST=${host}
+EXPIRES_EPOCH=${expires_epoch}
+URL=${url}
+TARGET=${target}
+EOF
+  mv -f -- "$tmp_ref" "$PI_REF_FILE"
+}
+
+clear_pi_ref() {
+  rm -f -- "$PI_REF_FILE"
+}
+
+# Shared worker executed identically locally (`bash -s`) and on the Pi (`rv_ssh "bash -s -- ..."`).
+read -r -d '' WORKER_SCRIPT <<'WORKER_EOF' || true
+set -euo pipefail
+export PATH="${HOME}/.local/bin:/usr/local/bin:${PATH}"
+
+STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/remote-view"
+STATE_FILE="${STATE_DIR}/tunel-view.state"
+PID_FILE="${STATE_DIR}/tunel-view.pid"
+LOG_FILE="${STATE_DIR}/tunel-view.log"
+
+kv_read() {
+  local file="$1" key="$2" line
+  [[ -r "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s' "${line#*=}"
+      return 0
+    fi
+  done < "$file"
+}
+
+fmt_epoch() {
+  local ep="$1"
+  date -d "@${ep}" -Iseconds 2>/dev/null \
+    || date -r "${ep}" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null \
+    || printf '%s' "$ep"
+}
+
+session_matching_pids() {
+  local sid="$1" run_id="${2:-}"
+  [[ "$sid" =~ ^[1-9][0-9]*$ ]] || return 0
+  local info
+  info="$(ps -s "$sid" -o pid=,comm=,args= 2>/dev/null || true)"
+  [[ -n "$info" ]] || return 0
+
+  # Guard against PID reuse across reboots: require cloudflared or our RUN_ID in the session.
+  local verified=0
+  if printf '%s\n' "$info" | awk '$2 == "cloudflared" { found=1; exit } END { exit(found ? 0 : 1) }'; then
+    verified=1
+  elif [[ -n "$run_id" ]] && printf '%s\n' "$info" | grep -Fq -- "$run_id"; then
+    verified=1
+  fi
+  [[ "$verified" -eq 1 ]] || return 0
+
+  printf '%s\n' "$info" | awk '$2 ~ /^(bash|timeout|cloudflared|python3(\.[0-9]+)?)$/ { print $1 }' || true
+}
+
+session_has_cloudflared() {
+  local sid="$1"
+  [[ "$sid" =~ ^[1-9][0-9]*$ ]] || return 1
+  ps -s "$sid" -o pid=,comm= 2>/dev/null \
+    | awk '$2 == "cloudflared" { found=1; exit } END { exit(found ? 0 : 1) }'
+}
+
+pid_is_cloudflared() {
+  local pid="$1"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$(ps -p "$pid" -o comm= 2>/dev/null | tr -d '[:space:]')" == "cloudflared" ]]
+}
+
+stop_session_set() {
+  local sid="$1" pgid="$2" cf_pid="$3" run_id="${4:-}"
+  local pids=() p
+  while IFS= read -r p; do
+    [[ -n "$p" ]] && pids+=("$p")
+  done < <(session_matching_pids "$sid" "$run_id")
+
+  if [[ -n "$cf_pid" ]] && pid_is_cloudflared "$cf_pid"; then
+    local seen=0 existing
+    for existing in "${pids[@]:-}"; do
+      [[ "$existing" == "$cf_pid" ]] && seen=1 && break
+    done
+    if [[ "$seen" -eq 0 ]]; then
+      pids+=("$cf_pid")
+    fi
+  fi
+
+  if [[ ${#pids[@]} -eq 0 ]]; then
+    return 1
+  fi
+
+  if [[ "$pgid" =~ ^[1-9][0-9]*$ ]]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  fi
+  if [[ "$sid" =~ ^[1-9][0-9]*$ ]]; then
+    pkill -TERM -s "$sid" 2>/dev/null || true
+  fi
+  for p in "${pids[@]}"; do
+    kill -TERM "$p" 2>/dev/null || true
+  done
+
+  local i remaining=()
+  for (( i=0; i<15; i++ )); do
+    remaining=()
+    while IFS= read -r p; do
+      [[ -n "$p" ]] && remaining+=("$p")
+    done < <(session_matching_pids "$sid" "$run_id")
+    if [[ -n "$cf_pid" ]] && pid_is_cloudflared "$cf_pid"; then
+      remaining+=("$cf_pid")
+    fi
+    if [[ ${#remaining[@]} -eq 0 ]]; then
+      printf '%s\n' "${pids[@]}"
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  if [[ "$pgid" =~ ^[1-9][0-9]*$ ]]; then
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  fi
+  if [[ "$sid" =~ ^[1-9][0-9]*$ ]]; then
+    pkill -KILL -s "$sid" 2>/dev/null || true
+  fi
+  for p in "${remaining[@]}"; do
+    kill -KILL "$p" 2>/dev/null || true
+  done
+
+  for (( i=0; i<10; i++ )); do
+    remaining=()
+    while IFS= read -r p; do
+      [[ -n "$p" ]] && remaining+=("$p")
+    done < <(session_matching_pids "$sid" "$run_id")
+    if [[ -n "$cf_pid" ]] && pid_is_cloudflared "$cf_pid"; then
+      remaining+=("$cf_pid")
+    fi
+    if [[ ${#remaining[@]} -eq 0 ]]; then
+      printf '%s\n' "${pids[@]}"
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  echo "tunel-view: failed to terminate processes: ${remaining[*]}" >&2
+  return 2
+}
+
+worker_down() {
+  local stopped_any=0
+  local all_pids=()
+  local s_sid s_pgid s_cf s_rpid s_rid
+  local p_sid p_pgid p_rpid p_rid
+
+  s_rpid="$(kv_read "$STATE_FILE" "RUNNER_PID")"
+  s_pgid="$(kv_read "$STATE_FILE" "PGID")"
+  s_sid="$(kv_read "$STATE_FILE" "SID")"
+  s_cf="$(kv_read "$STATE_FILE" "CLOUDFLARED_PID")"
+  s_rid="$(kv_read "$STATE_FILE" "RUN_ID")"
+  [[ -n "$s_sid" ]] || s_sid="$s_rpid"
+  [[ -n "$s_pgid" ]] || s_pgid="$s_sid"
+
+  p_rpid="$(kv_read "$PID_FILE" "RUNNER_PID")"
+  p_pgid="$(kv_read "$PID_FILE" "PGID")"
+  p_sid="$(kv_read "$PID_FILE" "SID")"
+  p_rid="$(kv_read "$PID_FILE" "RUN_ID")"
+  [[ -n "$p_sid" ]] || p_sid="$p_rpid"
+  [[ -n "$p_pgid" ]] || p_pgid="$p_sid"
+
+  local killed_out="" rc=0 line
+  if [[ -n "$s_sid" || -n "$s_cf" ]]; then
+    killed_out="$(stop_session_set "${s_sid:-}" "${s_pgid:-}" "${s_cf:-}" "${s_rid:-}")" || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+      stopped_any=1
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && all_pids+=("$line")
+      done <<<"$killed_out"
+    elif [[ "$rc" -eq 2 ]]; then
+      return 1
+    fi
+  fi
+
+  if [[ -n "$p_sid" && "$p_sid" != "$s_sid" ]]; then
+    rc=0
+    killed_out="$(stop_session_set "$p_sid" "${p_pgid:-$p_sid}" "" "${p_rid:-}")" || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+      stopped_any=1
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && all_pids+=("$line")
+      done <<<"$killed_out"
+    elif [[ "$rc" -eq 2 ]]; then
+      return 1
+    fi
+  fi
+
+  rm -f -- "$STATE_FILE" "$PID_FILE"
+
+  local pid_csv=""
+  if [[ ${#all_pids[@]} -gt 0 ]]; then
+    pid_csv="$(IFS=,; printf '%s' "${all_pids[*]}")"
+  fi
+  printf 'STOPPED=%s\nSTOPPED_PIDS=%s\n' "$stopped_any" "$pid_csv"
+}
+
+worker_status() {
+  if [[ ! -r "$STATE_FILE" ]]; then
+    local p_sid p_rid
+    p_sid="$(kv_read "$PID_FILE" "SID")"
+    [[ -n "$p_sid" ]] || p_sid="$(kv_read "$PID_FILE" "RUNNER_PID")"
+    p_rid="$(kv_read "$PID_FILE" "RUN_ID")"
+    if [[ -n "$p_sid" ]]; then
+      local live_pids
+      live_pids="$(session_matching_pids "$p_sid" "$p_rid")"
+      if [[ -z "$live_pids" ]]; then
+        rm -f -- "$PID_FILE"
+      fi
+    fi
+    printf 'STATUS=inactive\n'
+    return 0
+  fi
+
+  local sid rpid pgid cf_pid srv_pid ttl_sec expires_ep
+  sid="$(kv_read "$STATE_FILE" "SID")"
+  rpid="$(kv_read "$STATE_FILE" "RUNNER_PID")"
+  pgid="$(kv_read "$STATE_FILE" "PGID")"
+  cf_pid="$(kv_read "$STATE_FILE" "CLOUDFLARED_PID")"
+  srv_pid="$(kv_read "$STATE_FILE" "SERVER_PID")"
+  ttl_sec="$(kv_read "$STATE_FILE" "TTL_SECONDS")"
+  expires_ep="$(kv_read "$STATE_FILE" "EXPIRES_EPOCH")"
+  [[ -n "$sid" ]] || sid="$rpid"
+
+  local alive=0
+  if [[ -n "$sid" ]] && session_has_cloudflared "$sid"; then
+    alive=1
+  elif [[ -n "$cf_pid" ]] && pid_is_cloudflared "$cf_pid"; then
+    alive=1
+  fi
+
+  if [[ "$alive" -eq 1 && "$srv_pid" =~ ^[1-9][0-9]*$ ]] && ! kill -0 "$srv_pid" 2>/dev/null; then
+    worker_down >/dev/null || true
+    printf 'STATUS=inactive\n'
+    return 0
+  fi
+
+  if [[ "$alive" -eq 0 ]]; then
+    rm -f -- "$STATE_FILE" "$PID_FILE"
+    printf 'STATUS=inactive\n'
+    return 0
+  fi
+
+  local now
+  now="$(date +%s)"
+  if [[ "${ttl_sec:-0}" =~ ^[1-9][0-9]*$ ]] && [[ "${expires_ep:-0}" =~ ^[1-9][0-9]*$ ]]; then
+    if (( now >= expires_ep )); then
+      sleep 1
+      if ! session_has_cloudflared "$sid"; then
+        rm -f -- "$STATE_FILE" "$PID_FILE"
+        printf 'STATUS=inactive\n'
+        return 0
+      fi
+      if (( now > expires_ep + 5 )); then
+        worker_down >/dev/null || true
+        printf 'STATUS=inactive\n'
+        return 0
+      fi
+    fi
+  fi
+
+  printf 'STATUS=active\n'
+  cat -- "$STATE_FILE"
+}
+
+worker_up() {
+  local mode="$1" target_url="$2" ttl_sec="$3" ttl_label="$4" wait_sec="$5"
+  local serve_path="${6:-}" serve_dir="${7:-}" url_path="${8:-}"
+
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    echo "tunel-view: cloudflared not found in PATH ($PATH)" >&2
+    return 1
+  fi
+
+  local serve_port=""
+  if [[ -n "$serve_dir" ]]; then
+    command -v python3 >/dev/null 2>&1 || {
+      echo "tunel-view: python3 is required for --serve" >&2
+      return 1
+    }
+    serve_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    target_url="http://127.0.0.1:${serve_port}"
+  fi
+
+  mkdir -p -- "$STATE_DIR"
+  worker_down >/dev/null
+
+  local run_id started_ep started_at expires_ep expires_at
+  run_id="$(date +%s)-$$-${RANDOM}"
+  started_ep="$(date +%s)"
+  started_at="$(fmt_epoch "$started_ep")"
+  if [[ "$ttl_sec" -gt 0 ]]; then
+    expires_ep=$(( started_ep + ttl_sec ))
+    expires_at="$(fmt_epoch "$expires_ep")"
+  else
+    expires_ep=0
+    expires_at="never"
+  fi
+
+  : > "$LOG_FILE"
+  chmod 600 "$LOG_FILE" 2>/dev/null || true
+
+  local runner_code
+  runner_code='
+    state_file="$1"
+    pid_file="$2"
+    log_file="$3"
+    target_url="$4"
+    ttl_sec="$5"
+    run_id="$6"
+    serve_dir="${7:-}"
+    serve_port="${8:-}"
+    runner_pid="$$"
+
+    printf "RUNNER_PID=%s\nPGID=%s\nSID=%s\nRUN_ID=%s\n" \
+      "$runner_pid" "$runner_pid" "$runner_pid" "$run_id" > "$pid_file"
+
+    child_pid=""
+    server_pid=""
+    on_term() {
+      if [[ -n "$child_pid" ]]; then
+        kill -TERM "$child_pid" 2>/dev/null || true
+      fi
+      if [[ -n "$server_pid" ]]; then
+        kill -TERM "$server_pid" 2>/dev/null || true
+      fi
+    }
+    cleanup() {
+      if [[ -n "$server_pid" ]]; then
+        kill -TERM "$server_pid" 2>/dev/null || true
+      fi
+      if [[ -f "$pid_file" ]] && grep -qx "RUN_ID=${run_id}" "$pid_file" 2>/dev/null; then
+        rm -f -- "$pid_file"
+      fi
+      if [[ -f "$state_file" ]] && grep -qx "RUN_ID=${run_id}" "$state_file" 2>/dev/null; then
+        rm -f -- "$state_file"
+      fi
+    }
+    trap on_term TERM INT HUP
+    trap cleanup EXIT
+
+    if [[ -n "$serve_dir" ]]; then
+      python3 -m http.server "$serve_port" --bind 127.0.0.1 --directory "$serve_dir" >>"$log_file" 2>&1 &
+      server_pid="$!"
+    fi
+
+    if [[ "$ttl_sec" -gt 0 ]]; then
+      timeout --foreground -k 5 "$ttl_sec" \
+        cloudflared tunnel --no-autoupdate --url "$target_url" >>"$log_file" 2>&1 &
+    else
+      cloudflared tunnel --no-autoupdate --url "$target_url" >>"$log_file" 2>&1 &
+    fi
+    child_pid="$!"
+    wait "$child_pid" || true
+  '
+
+  setsid -f bash -c "$runner_code" _ \
+    "$STATE_FILE" "$PID_FILE" "$LOG_FILE" "$target_url" "$ttl_sec" "$run_id" "$serve_dir" "$serve_port" \
+    </dev/null >/dev/null 2>&1
+
+  local runner_pid="" i
+  for (( i=0; i<30; i++ )); do
+    if [[ -r "$PID_FILE" ]] && grep -qx "RUN_ID=${run_id}" "$PID_FILE" 2>/dev/null; then
+      runner_pid="$(kv_read "$PID_FILE" "RUNNER_PID")"
+      [[ -n "$runner_pid" ]] && break
+    fi
+    sleep 0.1
+  done
+
+  if [[ -z "$runner_pid" ]]; then
+    echo "tunel-view: failed to launch detached tunnel runner" >&2
+    [[ -s "$LOG_FILE" ]] && tail -n 25 -- "$LOG_FILE" >&2 || true
+    return 1
+  fi
+
+  local up_ok=0
+  cleanup_on_abort() {
+    if [[ "$up_ok" -eq 0 ]]; then
+      stop_session_set "$runner_pid" "$runner_pid" "" "$run_id" >/dev/null 2>&1 || true
+      rm -f -- "$PID_FILE" "$STATE_FILE"
+    fi
+  }
+  trap cleanup_on_abort EXIT INT TERM
+
+  local max_ticks=$(( wait_sec * 4 ))
+  local url=""
+  local ticks_used=0
+  for (( i=0; i<max_ticks; i++ )); do
+    ticks_used=$i
+    url="$(LC_ALL=C grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_FILE" 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$url" ]]; then
+      break
+    fi
+    if ! kill -0 "$runner_pid" 2>/dev/null; then
+      echo "tunel-view: cloudflared exited before producing a tunnel URL" >&2
+      [[ -s "$LOG_FILE" ]] && tail -n 25 -- "$LOG_FILE" >&2 || true
+      return 1
+    fi
+    sleep 0.25
+  done
+
+  if [[ -z "$url" ]]; then
+    echo "tunel-view: timed out after ${wait_sec}s waiting for trycloudflare.com URL" >&2
+    [[ -s "$LOG_FILE" ]] && tail -n 25 -- "$LOG_FILE" >&2 || true
+    return 1
+  fi
+
+  # Wait briefly for edge registration so the URL is immediately routable.
+  local reg_ticks=16
+  local rem_ticks=$(( max_ticks - ticks_used ))
+  if (( rem_ticks < 8 )); then
+    rem_ticks=8
+  fi
+  if (( reg_ticks > rem_ticks )); then
+    reg_ticks=$rem_ticks
+  fi
+  for (( i=0; i<reg_ticks; i++ )); do
+    if grep -q "Registered tunnel connection" "$LOG_FILE" 2>/dev/null; then
+      break
+    fi
+    if ! kill -0 "$runner_pid" 2>/dev/null; then
+      echo "tunel-view: cloudflared exited right after generating URL" >&2
+      [[ -s "$LOG_FILE" ]] && tail -n 25 -- "$LOG_FILE" >&2 || true
+      return 1
+    fi
+    sleep 0.25
+  done
+
+  if ! kill -0 "$runner_pid" 2>/dev/null; then
+    echo "tunel-view: tunnel runner exited unexpectedly" >&2
+    [[ -s "$LOG_FILE" ]] && tail -n 25 -- "$LOG_FILE" >&2 || true
+    return 1
+  fi
+
+  local cf_pid srv_pid full_url
+  cf_pid="$(ps -s "$runner_pid" -o pid=,comm= 2>/dev/null | awk '$2 == "cloudflared" { print $1; exit }' || true)"
+  srv_pid="$(ps -s "$runner_pid" -o pid=,comm= 2>/dev/null | awk '$2 ~ /^python3(\.[0-9]+)?$/ { print $1; exit }' || true)"
+  if [[ -n "$serve_dir" && -z "$srv_pid" ]]; then
+    echo "tunel-view: local static HTTP server exited unexpectedly" >&2
+    [[ -s "$LOG_FILE" ]] && tail -n 25 -- "$LOG_FILE" >&2 || true
+    return 1
+  fi
+  full_url="${url}${url_path}"
+
+  local tmp_state
+  tmp_state="$(mktemp "${STATE_FILE}.XXXXXX")"
+  cat > "$tmp_state" <<EOF
+RUN_ID=${run_id}
+RUNNER_PID=${runner_pid}
+PGID=${runner_pid}
+SID=${runner_pid}
+CLOUDFLARED_PID=${cf_pid}
+SERVER_PID=${srv_pid}
+SERVE_PATH=${serve_path}
+MODE=${mode}
+TARGET=${target_url}
+BASE_URL=${url}
+URL=${full_url}
+TTL_SECONDS=${ttl_sec}
+TTL_LABEL=${ttl_label}
+STARTED_AT=${started_at}
+STARTED_EPOCH=${started_ep}
+EXPIRES_AT=${expires_at}
+EXPIRES_EPOCH=${expires_ep}
+LOG_FILE=${LOG_FILE}
+EOF
+  chmod 600 "$tmp_state" 2>/dev/null || true
+  mv -f -- "$tmp_state" "$STATE_FILE"
+
+  up_ok=1
+  trap - EXIT INT TERM
+
+  printf 'STATUS=active\n'
+  cat -- "$STATE_FILE"
+}
+
+worker_logs() {
+  local lines="${1:-50}"
+  if [[ ! -r "$LOG_FILE" ]]; then
+    echo "tunel-view: no log file at $LOG_FILE" >&2
+    return 1
+  fi
+  tail -n "$lines" -- "$LOG_FILE"
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  up)     worker_up "$@" ;;
+  down)   worker_down ;;
+  status) worker_status ;;
+  logs)   worker_logs "$@" ;;
+  *)
+    echo "tunel-view: internal worker error: unknown cmd '$cmd'" >&2
+    exit 1
+    ;;
+esac
+WORKER_EOF
+
+# Parsed state container populated by parse_kv_stream
+TV_STATUS="" TV_MODE="" TV_TARGET="" TV_URL="" TV_BASE_URL="" TV_SERVE_PATH=""
+TV_RUNNER_PID="" TV_PGID="" TV_SID="" TV_CLOUDFLARED_PID="" TV_SERVER_PID=""
+TV_TTL_SECONDS="" TV_TTL_LABEL="" TV_STARTED_AT="" TV_STARTED_EPOCH=""
+TV_EXPIRES_AT="" TV_EXPIRES_EPOCH="" TV_LOG_FILE=""
+TV_RUN_ID="" TV_STOPPED="" TV_STOPPED_PIDS=""
+
+reset_tv_vars() {
+  TV_STATUS="" TV_MODE="" TV_TARGET="" TV_URL="" TV_BASE_URL="" TV_SERVE_PATH=""
+  TV_RUNNER_PID="" TV_PGID="" TV_SID="" TV_CLOUDFLARED_PID="" TV_SERVER_PID=""
+  TV_TTL_SECONDS="" TV_TTL_LABEL="" TV_STARTED_AT="" TV_STARTED_EPOCH=""
+  TV_EXPIRES_AT="" TV_EXPIRES_EPOCH="" TV_LOG_FILE=""
+  TV_RUN_ID="" TV_STOPPED="" TV_STOPPED_PIDS=""
+}
+
+parse_kv_stream() {
+  local raw="$1" line k v
+  reset_tv_vars
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* ]] || continue
+    k="${line%%=*}"
+    v="${line#*=}"
+    case "$k" in
+      STATUS) TV_STATUS="$v" ;;
+      MODE) TV_MODE="$v" ;;
+      TARGET) TV_TARGET="$v" ;;
+      BASE_URL) TV_BASE_URL="$v" ;;
+      SERVE_PATH) TV_SERVE_PATH="$v" ;;
+      URL) TV_URL="$v" ;;
+      RUNNER_PID) TV_RUNNER_PID="$v" ;;
+      PGID) TV_PGID="$v" ;;
+      SID) TV_SID="$v" ;;
+      CLOUDFLARED_PID) TV_CLOUDFLARED_PID="$v" ;;
+      SERVER_PID) TV_SERVER_PID="$v" ;;
+      TTL_SECONDS) TV_TTL_SECONDS="$v" ;;
+      TTL_LABEL) TV_TTL_LABEL="$v" ;;
+      STARTED_AT) TV_STARTED_AT="$v" ;;
+      STARTED_EPOCH) TV_STARTED_EPOCH="$v" ;;
+      EXPIRES_AT) TV_EXPIRES_AT="$v" ;;
+      EXPIRES_EPOCH) TV_EXPIRES_EPOCH="$v" ;;
+      LOG_FILE) TV_LOG_FILE="$v" ;;
+      RUN_ID) TV_RUN_ID="$v" ;;
+      STOPPED) TV_STOPPED="$v" ;;
+      STOPPED_PIDS) TV_STOPPED_PIDS="$v" ;;
+    esac
+  done <<<"$raw"
+}
+
+run_worker() {
+  local scope="$1"
+  shift
+  if [[ "$scope" == "local" ]]; then
+    bash -s -- "$@" <<<"$WORKER_SCRIPT"
+  else
+    local remote_cmd="bash -s --" arg
+    for arg in "$@"; do
+      remote_cmd+=" $(printf '%q' "$arg")"
+    done
+    rv_ssh "$remote_cmd" <<<"$WORKER_SCRIPT"
+  fi
+}
+
+print_active_json() {
+  local scope="$1" host_field="${2:-}"
+  printf '{"status":"%s","mode":"%s","url":"%s","target":"%s","serve_path":"%s","runner_pid":%s,"pgid":%s,"cloudflared_pid":%s,"server_pid":%s,"ttl":"%s","ttl_seconds":%s,"started_at":"%s","expires_at":"%s","log_file":"%s","host":"%s"}\n' \
+    "$(json_escape "$TV_STATUS")" \
+    "$(json_escape "${TV_MODE:-$scope}")" \
+    "$(json_escape "$TV_URL")" \
+    "$(json_escape "$TV_TARGET")" \
+    "$(json_escape "$TV_SERVE_PATH")" \
+    "${TV_RUNNER_PID:-null}" \
+    "${TV_PGID:-null}" \
+    "${TV_CLOUDFLARED_PID:-null}" \
+    "${TV_SERVER_PID:-null}" \
+    "$(json_escape "$TV_TTL_LABEL")" \
+    "${TV_TTL_SECONDS:-0}" \
+    "$(json_escape "$TV_STARTED_AT")" \
+    "$(json_escape "$TV_EXPIRES_AT")" \
+    "$(json_escape "$TV_LOG_FILE")" \
+    "$(json_escape "$host_field")"
+}
+
+print_status_human() {
+  local scope="$1" host_field="${2:-}"
+  local scope_label="$scope"
+  [[ "$scope" == "pi" && -n "$host_field" ]] && scope_label="pi ($host_field)"
+
+  if [[ "$TV_STATUS" != "active" ]]; then
+    echo "[$scope_label] inactive"
+    return 0
+  fi
+
+  local ttl_desc="unlimited (no TTL)"
+  if [[ "${TV_TTL_SECONDS:-0}" -gt 0 && "${TV_EXPIRES_EPOCH:-0}" -gt 0 ]]; then
+    local now rem
+    now="$(date +%s)"
+    rem=$(( TV_EXPIRES_EPOCH - now ))
+    if (( rem < 0 )); then rem=0; fi
+    ttl_desc="$(format_duration "$rem") remaining (expires ${TV_EXPIRES_AT}, TTL ${TV_TTL_LABEL})"
+  fi
+
+  echo "[$scope_label] active"
+  echo "  URL     : $TV_URL"
+  echo "  Target  : $TV_TARGET"
+  [[ -n "$TV_SERVE_PATH" ]] && echo "  Serve   : $TV_SERVE_PATH (http server pid: ${TV_SERVER_PID:-unknown})"
+  echo "  PID/PGID: ${TV_RUNNER_PID} (cloudflared: ${TV_CLOUDFLARED_PID:-unknown})"
+  echo "  Started : $TV_STARTED_AT"
+  echo "  Expiry  : $ttl_desc"
+  echo "  Log     : $TV_LOG_FILE"
+}
+
+has_local_state_hint() {
+  [[ -r "${LOCAL_CACHE_DIR}/tunel-view.state" || -r "${LOCAL_CACHE_DIR}/tunel-view.pid" ]]
+}
+
+# Sets CHECK_LOCAL, CHECK_PI, PI_EXPLICIT based on CLI flags and local state hints.
+resolve_target_scopes() {
+  local allow_all="${1:-1}"
+  CHECK_LOCAL=0
+  CHECK_PI=0
+  PI_EXPLICIT=0
+  if [[ "$allow_all" -eq 1 && "$OPT_ALL" -eq 1 ]]; then
+    CHECK_LOCAL=1
+    CHECK_PI=1
+    PI_EXPLICIT=1
+  elif [[ "$OPT_LOCAL" -eq 1 || "$HAS_LOCAL_TARGET" -eq 1 ]]; then
+    CHECK_LOCAL=1
+  elif [[ "$HAS_PI_FLAGS" -eq 1 ]]; then
+    CHECK_PI=1
+    PI_EXPLICIT=1
+  else
+    has_local_state_hint && CHECK_LOCAL=1
+    if [[ -r "$PI_REF_FILE" ]] || [[ "$CHECK_LOCAL" -eq 0 ]]; then
+      CHECK_PI=1
+    fi
+  fi
+}
+
+ACTION=""
+OPT_LOCAL=0
+OPT_PI=0
+OPT_ALL=0
+OPT_HOST=""
+OPT_HOST_SET=0
+OPT_PORT=""
+OPT_REMOTE_PORT=""
+OPT_TARGET=""
+OPT_SERVE=""
+OPT_TTL="12h"
+OPT_TTL_SET=0
+OPT_RESTART=0
+OPT_KEEP_OTHER=0
+OPT_WAIT="25"
+OPT_LINES="50"
+OPT_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    up|start)
+      [[ -z "$ACTION" ]] || rv_die "unexpected extra command: $1"
+      ACTION="up"
+      shift
+      ;;
+    down|stop)
+      [[ -z "$ACTION" ]] || rv_die "unexpected extra command: $1"
+      ACTION="down"
+      shift
+      ;;
+    status)
+      [[ -z "$ACTION" ]] || rv_die "unexpected extra command: $1"
+      ACTION="status"
+      shift
+      ;;
+    url)
+      [[ -z "$ACTION" ]] || rv_die "unexpected extra command: $1"
+      ACTION="url"
+      shift
+      ;;
+    logs|log)
+      [[ -z "$ACTION" ]] || rv_die "unexpected extra command: $1"
+      ACTION="logs"
+      shift
+      ;;
+    help)
+      usage
+      exit 0
+      ;;
+    --local)
+      OPT_LOCAL=1
+      shift
+      ;;
+    --pi)
+      OPT_PI=1
+      shift
+      ;;
+    --all)
+      OPT_ALL=1
+      shift
+      ;;
+    --restart|--fresh)
+      OPT_RESTART=1
+      shift
+      ;;
+    --keep-other)
+      OPT_KEEP_OTHER=1
+      shift
+      ;;
+    --host)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      OPT_HOST="$2"
+      OPT_HOST_SET=1
+      shift 2
+      ;;
+    -s|--serve)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      OPT_SERVE="$2"
+      shift 2
+      ;;
+    -p|--port)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      validate_port "$2" "$1"
+      OPT_PORT="$2"
+      shift 2
+      ;;
+    --remote-port)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      validate_port "$2" "$1"
+      OPT_REMOTE_PORT="$2"
+      shift 2
+      ;;
+    --target|--local-url)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      validate_target_url "$2"
+      OPT_TARGET="$2"
+      shift 2
+      ;;
+    --ttl)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      OPT_TTL="$2"
+      OPT_TTL_SET=1
+      shift 2
+      ;;
+    --wait)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      validate_positive_int "$2" "$1"
+      OPT_WAIT="$2"
+      shift 2
+      ;;
+    -n|--lines)
+      [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      validate_positive_int "$2" "$1"
+      OPT_LINES="$2"
+      shift 2
+      ;;
+    --json)
+      OPT_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      rv_die "unknown option: $1 (try --help)"
+      ;;
+    *)
+      rv_die "unknown command or argument: $1 (try --help)"
+      ;;
+  esac
+done
+
+[[ -n "$ACTION" ]] || ACTION="status"
+
+if [[ "$OPT_HOST_SET" -eq 1 ]]; then
+  REMOTE_VIEW_SSH_HOST="$OPT_HOST"
+elif [[ -r "$PI_REF_FILE" ]]; then
+  _ref_host="$(read_kv_file_key "$PI_REF_FILE" "SSH_HOST")"
+  [[ -n "$_ref_host" && "$ACTION" != "up" ]] && REMOTE_VIEW_SSH_HOST="$_ref_host"
+fi
+
+HAS_LOCAL_TARGET=0
+if [[ -n "$OPT_PORT" || -n "$OPT_TARGET" || -n "$OPT_SERVE" ]]; then
+  HAS_LOCAL_TARGET=1
+fi
+
+HAS_PI_FLAGS=0
+if [[ "$OPT_PI" -eq 1 || "$OPT_HOST_SET" -eq 1 || -n "$OPT_REMOTE_PORT" ]]; then
+  HAS_PI_FLAGS=1
+fi
+
+if (( (OPT_LOCAL == 1 || HAS_LOCAL_TARGET == 1) && HAS_PI_FLAGS == 1 )); then
+  rv_die "cannot combine local options (--local/--serve/--port/--target) with Pi options (--pi/--host/--remote-port)"
+fi
+
+local_target_specs=0
+[[ -n "$OPT_PORT" ]] && (( local_target_specs++ )) || true
+[[ -n "$OPT_TARGET" ]] && (( local_target_specs++ )) || true
+[[ -n "$OPT_SERVE" ]] && (( local_target_specs++ )) || true
+if (( local_target_specs > 1 )); then
+  rv_die "specify only one of --serve, --port, or --target"
+fi
+
+SERVE_PATH=""
+SERVE_DIR=""
+SERVE_URL_PATH=""
+if [[ -n "$OPT_SERVE" ]]; then
+  [[ -e "$OPT_SERVE" ]] || rv_die "--serve path not found: $OPT_SERVE"
+  SERVE_PATH="$(readlink -f -- "$OPT_SERVE")"
+  if [[ -f "$SERVE_PATH" ]]; then
+    SERVE_DIR="$(dirname -- "$SERVE_PATH")"
+    _serve_name="$(basename -- "$SERVE_PATH")"
+    if command -v python3 >/dev/null 2>&1; then
+      SERVE_URL_PATH="/$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$_serve_name")"
+    else
+      SERVE_URL_PATH="/${_serve_name}"
+    fi
+  elif [[ -d "$SERVE_PATH" ]]; then
+    SERVE_DIR="$SERVE_PATH"
+    SERVE_URL_PATH="/"
+  else
+    rv_die "--serve must be a regular file or directory: $OPT_SERVE"
+  fi
+fi
+
+case "$ACTION" in
+  up)
+    TTL_SECONDS="$(parse_ttl_seconds "$OPT_TTL")"
+    if [[ "$TTL_SECONDS" -eq 0 ]]; then
+      TTL_LABEL="unlimited"
+    else
+      TTL_LABEL="$OPT_TTL"
+    fi
+
+    if [[ "$HAS_LOCAL_TARGET" -eq 1 ]]; then
+      MODE="local"
+      if [[ -n "$OPT_PORT" ]]; then
+        TARGET_URL="http://127.0.0.1:${OPT_PORT}"
+      elif [[ -n "$OPT_TARGET" ]]; then
+        TARGET_URL="$OPT_TARGET"
+      else
+        TARGET_URL="serve://${SERVE_PATH}"
+      fi
+    elif [[ "$OPT_LOCAL" -eq 1 ]]; then
+      rv_die "--local with 'up' requires --serve <path>, --port <port>, or --target <url>"
+    else
+      MODE="pi"
+      RPORT="${OPT_REMOTE_PORT:-$REMOTE_VIEW_PORT}"
+      validate_port "$RPORT" "REMOTE_VIEW_PORT"
+      TARGET_URL="http://127.0.0.1:${RPORT}"
+    fi
+
+    if [[ "$OPT_KEEP_OTHER" -eq 0 ]]; then
+      if [[ "$MODE" == "local" && ( -r "$PI_REF_FILE" || "$OPT_ALL" -eq 1 ) ]]; then
+        run_worker "pi" down >/dev/null 2>&1 || true
+        clear_pi_ref
+      elif [[ "$MODE" == "pi" ]] && ( has_local_state_hint || [[ "$OPT_ALL" -eq 1 ]] ); then
+        run_worker "local" down >/dev/null 2>&1 || true
+      fi
+    fi
+
+    REUSED=0
+    if [[ "$OPT_RESTART" -eq 0 ]]; then
+      existing_out="$(run_worker "$MODE" status || true)"
+      parse_kv_stream "$existing_out"
+      if [[ "$TV_STATUS" == "active" ]]; then
+        _same_target=0
+        if [[ -n "$SERVE_PATH" && "$TV_SERVE_PATH" == "$SERVE_PATH" ]]; then
+          _same_target=1
+        elif [[ -z "$SERVE_PATH" && -z "$TV_SERVE_PATH" && "$TV_TARGET" == "$TARGET_URL" ]]; then
+          _same_target=1
+        fi
+        if [[ "$_same_target" -eq 1 ]] && [[ "$OPT_TTL_SET" -eq 0 || "${TV_TTL_SECONDS:-0}" == "$TTL_SECONDS" ]]; then
+          REUSED=1
+          out="$existing_out"
+        fi
+      fi
+    fi
+
+    if [[ "$REUSED" -eq 0 ]]; then
+      out="$(run_worker "$MODE" up "$MODE" "$TARGET_URL" "$TTL_SECONDS" "$TTL_LABEL" "$OPT_WAIT" "$SERVE_PATH" "$SERVE_DIR" "$SERVE_URL_PATH")"
+      parse_kv_stream "$out"
+    fi
+
+    if [[ "$MODE" == "pi" ]]; then
+      save_pi_ref "$REMOTE_VIEW_SSH_HOST" "${TV_EXPIRES_EPOCH:-0}" "$TV_URL" "$TARGET_URL"
+      host_meta="$REMOTE_VIEW_SSH_HOST"
+    else
+      host_meta=""
+    fi
+
+    if [[ "$OPT_JSON" -eq 1 ]]; then
+      print_active_json "$MODE" "$host_meta"
+    else
+      printf '%s\n' "$TV_URL"
+      state_word="$([[ "$REUSED" -eq 1 ]] && echo "reusing active" || echo "active")"
+      shown_target="${TV_TARGET:-$TARGET_URL}"
+      [[ -n "$TV_SERVE_PATH" ]] && shown_target="${TV_SERVE_PATH} -> ${shown_target}"
+      if [[ "${TV_TTL_SECONDS:-0}" -gt 0 ]]; then
+        if [[ "$MODE" == "pi" ]]; then
+          echo "tunel-view: ${state_word} (pi -> $shown_target on $REMOTE_VIEW_SSH_HOST, expires at $TV_EXPIRES_AT)" >&2
+        else
+          echo "tunel-view: ${state_word} (local -> $shown_target, expires at $TV_EXPIRES_AT)" >&2
+        fi
+      else
+        if [[ "$MODE" == "pi" ]]; then
+          echo "tunel-view: ${state_word} (pi -> $shown_target on $REMOTE_VIEW_SSH_HOST, no TTL limit)" >&2
+        else
+          echo "tunel-view: ${state_word} (local -> $shown_target, no TTL limit)" >&2
+        fi
+      fi
+    fi
+    ;;
+
+  down)
+    resolve_target_scopes 1
+
+    local_stopped=0 local_pids=""
+    pi_stopped=0 pi_pids=""
+    pi_err=0
+
+    if [[ "$CHECK_LOCAL" -eq 1 ]]; then
+      out="$(run_worker "local" down)"
+      parse_kv_stream "$out"
+      local_stopped="${TV_STOPPED:-0}"
+      local_pids="${TV_STOPPED_PIDS:-}"
+    fi
+
+    if [[ "$CHECK_PI" -eq 1 ]]; then
+      if out="$(run_worker "pi" down)"; then
+        parse_kv_stream "$out"
+        pi_stopped="${TV_STOPPED:-0}"
+        pi_pids="${TV_STOPPED_PIDS:-}"
+        clear_pi_ref
+      else
+        pi_err=1
+        if [[ "$PI_EXPLICIT" -eq 1 || -r "$PI_REF_FILE" ]]; then
+          echo "tunel-view: failed to stop Pi tunnel on $REMOTE_VIEW_SSH_HOST" >&2
+        fi
+      fi
+    fi
+
+    if [[ "$OPT_JSON" -eq 1 ]]; then
+      printf '{"local_stopped":%s,"local_pids":"%s","pi_stopped":%s,"pi_pids":"%s","pi_error":%s}\n' \
+        "$([[ "$local_stopped" -eq 1 ]] && echo true || echo false)" \
+        "$(json_escape "$local_pids")" \
+        "$([[ "$pi_stopped" -eq 1 ]] && echo true || echo false)" \
+        "$(json_escape "$pi_pids")" \
+        "$([[ "$pi_err" -eq 1 ]] && echo true || echo false)"
+    else
+      if [[ "$local_stopped" -eq 1 ]]; then
+        echo "tunel-view: stopped local tunnel (pids: ${local_pids:-cleaned})"
+      fi
+      if [[ "$pi_stopped" -eq 1 ]]; then
+        echo "tunel-view: stopped pi tunnel on $REMOTE_VIEW_SSH_HOST (pids: ${pi_pids:-cleaned})"
+      fi
+      if [[ "$local_stopped" -eq 0 && "$pi_stopped" -eq 0 && "$pi_err" -eq 0 ]]; then
+        echo "tunel-view: no active tunnel"
+      fi
+    fi
+
+    if [[ "$pi_err" -eq 1 && ( "$PI_EXPLICIT" -eq 1 || -r "$PI_REF_FILE" ) ]]; then
+      exit 1
+    fi
+    ;;
+
+  status)
+    resolve_target_scopes 1
+
+    local_out="" pi_out=""
+    local_active=0 pi_active=0 pi_err=0
+
+    if [[ "$CHECK_LOCAL" -eq 1 ]]; then
+      local_out="$(run_worker "local" status)"
+      parse_kv_stream "$local_out"
+      [[ "$TV_STATUS" == "active" ]] && local_active=1
+    fi
+
+    if [[ "$CHECK_PI" -eq 1 ]]; then
+      if pi_out="$(run_worker "pi" status)"; then
+        parse_kv_stream "$pi_out"
+        if [[ "$TV_STATUS" == "active" ]]; then
+          pi_active=1
+        else
+          clear_pi_ref
+        fi
+      else
+        pi_err=1
+        if [[ "$PI_EXPLICIT" -eq 1 ]]; then
+          echo "tunel-view: failed to query Pi status on $REMOTE_VIEW_SSH_HOST" >&2
+        fi
+      fi
+    fi
+
+    if [[ "$OPT_JSON" -eq 1 ]]; then
+      if [[ "$OPT_ALL" -eq 1 || ( "$CHECK_LOCAL" -eq 1 && "$CHECK_PI" -eq 1 ) ]]; then
+        local_json='{"status":"inactive"}'
+        pi_json='{"status":"inactive"}'
+        if [[ "$CHECK_LOCAL" -eq 1 ]]; then
+          parse_kv_stream "$local_out"
+          [[ "$TV_STATUS" == "active" ]] && local_json="$(print_active_json "local" "")"
+        fi
+        if [[ "$CHECK_PI" -eq 1 && "$pi_err" -eq 0 ]]; then
+          parse_kv_stream "$pi_out"
+          [[ "$TV_STATUS" == "active" ]] && pi_json="$(print_active_json "pi" "$REMOTE_VIEW_SSH_HOST")"
+        elif [[ "$pi_err" -eq 1 ]]; then
+          pi_json='{"status":"unreachable"}'
+        fi
+        printf '{"local":%s,"pi":%s}\n' "$local_json" "$pi_json"
+      elif [[ "$CHECK_LOCAL" -eq 1 ]]; then
+        parse_kv_stream "$local_out"
+        if [[ "$TV_STATUS" == "active" ]]; then
+          print_active_json "local" ""
+        else
+          echo '{"status":"inactive","mode":"local"}'
+        fi
+      else
+        if [[ "$pi_err" -eq 1 ]]; then
+          exit 1
+        fi
+        parse_kv_stream "$pi_out"
+        if [[ "$TV_STATUS" == "active" ]]; then
+          print_active_json "pi" "$REMOTE_VIEW_SSH_HOST"
+        else
+          printf '{"status":"inactive","mode":"pi","host":"%s"}\n' "$(json_escape "$REMOTE_VIEW_SSH_HOST")"
+        fi
+      fi
+    else
+      if [[ "$CHECK_LOCAL" -eq 1 ]]; then
+        parse_kv_stream "$local_out"
+        print_status_human "local" ""
+      fi
+      if [[ "$CHECK_PI" -eq 1 ]]; then
+        if [[ "$pi_err" -eq 1 ]]; then
+          if [[ "$PI_EXPLICIT" -eq 1 ]]; then
+            exit 1
+          fi
+          echo "[pi ($REMOTE_VIEW_SSH_HOST)] unreachable (SSH failed)" >&2
+        else
+          parse_kv_stream "$pi_out"
+          print_status_human "pi" "$REMOTE_VIEW_SSH_HOST"
+        fi
+      fi
+    fi
+
+    if [[ "$pi_err" -eq 1 && "$PI_EXPLICIT" -eq 1 ]]; then
+      exit 1
+    fi
+    ;;
+
+  url)
+    resolve_target_scopes 0
+
+    local_url="" pi_url=""
+    local_out="" pi_out=""
+    pi_err=0
+
+    if [[ "$CHECK_LOCAL" -eq 1 ]]; then
+      local_out="$(run_worker "local" status)"
+      parse_kv_stream "$local_out"
+      [[ "$TV_STATUS" == "active" ]] && local_url="$TV_URL"
+    fi
+
+    if [[ "$CHECK_PI" -eq 1 ]]; then
+      if pi_out="$(run_worker "pi" status)"; then
+        parse_kv_stream "$pi_out"
+        if [[ "$TV_STATUS" == "active" ]]; then
+          pi_url="$TV_URL"
+        else
+          clear_pi_ref
+        fi
+      else
+        pi_err=1
+      fi
+    fi
+
+    if [[ -n "$local_url" && -n "$pi_url" ]]; then
+      rv_die "both local and pi tunnels are active; pass --local or --pi"
+    elif [[ -n "$local_url" ]]; then
+      if [[ "$OPT_JSON" -eq 1 ]]; then
+        parse_kv_stream "$local_out"
+        print_active_json "local" ""
+      else
+        printf '%s\n' "$local_url"
+      fi
+    elif [[ -n "$pi_url" ]]; then
+      if [[ "$OPT_JSON" -eq 1 ]]; then
+        parse_kv_stream "$pi_out"
+        print_active_json "pi" "$REMOTE_VIEW_SSH_HOST"
+      else
+        printf '%s\n' "$pi_url"
+      fi
+    else
+      if [[ "$pi_err" -eq 1 && "$PI_EXPLICIT" -eq 1 ]]; then
+        rv_die "failed to query Pi tunnel on $REMOTE_VIEW_SSH_HOST"
+      fi
+      echo "tunel-view: no active tunnel" >&2
+      exit 1
+    fi
+    ;;
+
+  logs)
+    if [[ "$OPT_LOCAL" -eq 1 || "$HAS_LOCAL_TARGET" -eq 1 ]]; then
+      run_worker "local" logs "$OPT_LINES"
+    elif [[ "$HAS_PI_FLAGS" -eq 1 ]]; then
+      run_worker "pi" logs "$OPT_LINES"
+    elif has_local_state_hint && [[ ! -r "$PI_REF_FILE" ]]; then
+      run_worker "local" logs "$OPT_LINES"
+    elif [[ -r "$PI_REF_FILE" ]]; then
+      run_worker "pi" logs "$OPT_LINES"
+    elif [[ -r "${LOCAL_CACHE_DIR}/tunel-view.log" ]]; then
+      run_worker "local" logs "$OPT_LINES"
+    else
+      run_worker "pi" logs "$OPT_LINES"
+    fi
+    ;;
+esac

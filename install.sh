@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # New-computer setup script for remote-view:
-# 1. Symlinks drop-html, drop-dir, and global skills (Antigravity + OpenCode).
+# 1. Symlinks drop-html, drop-dir, tunel-view, and global skills (Antigravity + OpenCode).
 # 2. Optionally writes ~/.config/remote-view/config when target flags are passed.
 # 3. Tests connecting to the Pi (syncs /_assets/ if reachable, or guides you
 #    through SSH key setup, Pi provisioning, or off-LAN Cloudflare Tunnel).
@@ -28,8 +28,8 @@ usage() {
 Usage: ./install.sh [OPTIONS]
 
 Set up remote-view on a new computer:
-  - Symlinks drop-html and drop-dir into ~/.local/bin
-  - Symlinks the remote-view skill for Antigravity and OpenCode
+  - Symlinks drop-html, drop-dir, and tunel-view into ~/.local/bin
+  - Symlinks the remote-view and tunel-view skills for Antigravity and OpenCode
   - Tests connecting to your Pi (and helps configure SSH or prints next steps)
 
 Options:
@@ -90,15 +90,20 @@ remove_symlink() {
 if [[ "$UNINSTALL" -eq 1 ]]; then
   remove_symlink "$REPO_DIR/bin/drop-html" "$BIN_DIR/drop-html"
   remove_symlink "$REPO_DIR/bin/drop-dir" "$BIN_DIR/drop-dir"
+  remove_symlink "$REPO_DIR/bin/tunel-view" "$BIN_DIR/tunel-view"
   remove_symlink "$REPO_DIR/skills/remote-view" "$AGY_SKILLS_DIR/remote-view"
+  remove_symlink "$REPO_DIR/skills/tunel-view" "$AGY_SKILLS_DIR/tunel-view"
   remove_symlink "$REPO_DIR/skills/remote-view" "$AGENTS_SKILLS_DIR/remote-view"
+  remove_symlink "$REPO_DIR/skills/tunel-view" "$AGENTS_SKILLS_DIR/tunel-view"
   remove_symlink "$REPO_DIR/skills/remote-view" "$OPENCODE_SKILLS_DIR/remote-view"
+  remove_symlink "$REPO_DIR/skills/tunel-view" "$OPENCODE_SKILLS_DIR/tunel-view"
   exit 0
 fi
 
 chmod +x \
   "$REPO_DIR/bin/drop-html" \
   "$REPO_DIR/bin/drop-dir" \
+  "$REPO_DIR/bin/tunel-view" \
   "$REPO_DIR/pi/setup-pi.sh" \
   "$REPO_DIR/pi/setup-cloudflared.sh" \
   "$REPO_DIR/pi/quick-tunnel.sh" \
@@ -108,11 +113,15 @@ chmod +x \
 echo "==> Linking CLIs and global skills..."
 safe_symlink "$REPO_DIR/bin/drop-html" "$BIN_DIR/drop-html"
 safe_symlink "$REPO_DIR/bin/drop-dir" "$BIN_DIR/drop-dir"
+safe_symlink "$REPO_DIR/bin/tunel-view" "$BIN_DIR/tunel-view"
 safe_symlink "$REPO_DIR/skills/remote-view" "$AGY_SKILLS_DIR/remote-view"
+safe_symlink "$REPO_DIR/skills/tunel-view" "$AGY_SKILLS_DIR/tunel-view"
 safe_symlink "$REPO_DIR/skills/remote-view" "$AGENTS_SKILLS_DIR/remote-view"
+safe_symlink "$REPO_DIR/skills/tunel-view" "$AGENTS_SKILLS_DIR/tunel-view"
 
 if [[ "$LINK_OPENCODE_NATIVE" -eq 1 ]]; then
   safe_symlink "$REPO_DIR/skills/remote-view" "$OPENCODE_SKILLS_DIR/remote-view"
+  safe_symlink "$REPO_DIR/skills/tunel-view" "$OPENCODE_SKILLS_DIR/tunel-view"
 fi
 
 if [[ -n "$OPT_HOST" || -n "$OPT_URL" || -n "$OPT_REMOTE_DIR" || -n "$OPT_THEME" ]]; then

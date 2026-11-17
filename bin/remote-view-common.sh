@@ -22,6 +22,7 @@ rv_load_config() {
   local _env_theme="${REMOTE_VIEW_THEME:-}"
   local _env_template="${REMOTE_VIEW_TEMPLATE:-}"
   local _env_ssh_batch="${REMOTE_VIEW_SSH_BATCH:-}"
+  local _env_port="${REMOTE_VIEW_PORT:-}"
 
   if [[ -r "$config_file" ]]; then
     # shellcheck source=/dev/null
@@ -34,6 +35,7 @@ rv_load_config() {
   REMOTE_VIEW_THEME="${_env_theme:-${REMOTE_VIEW_THEME:-auto}}"
   REMOTE_VIEW_TEMPLATE="${_env_template:-${REMOTE_VIEW_TEMPLATE:-$repo_dir/template/base.html}}"
   REMOTE_VIEW_SSH_BATCH="${_env_ssh_batch:-${REMOTE_VIEW_SSH_BATCH:-1}}"
+  REMOTE_VIEW_PORT="${_env_port:-${REMOTE_VIEW_PORT:-80}}"
 }
 
 rv_die() {

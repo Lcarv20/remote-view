@@ -37,22 +37,44 @@ Clone the repo and run:
 ./install.sh
 ```
 
-This symlinks `drop-html` and `drop-dir` into `~/.local/bin`, installs the [remote-view skill](skills/remote-view/SKILL.md) for Antigravity (`~/.gemini/config/skills/remote-view`) and OpenCode (`~/.agents/skills/remote-view`), and checks SSH/HTTP connectivity to the Pi.
+This symlinks `drop-html`, `drop-dir`, and `tunel-view` into `~/.local/bin`, installs the [remote-view skill](skills/remote-view/SKILL.md) and [tunel-view skill](skills/tunel-view/SKILL.md) for Antigravity (`~/.gemini/config/skills/`) and OpenCode (`~/.agents/skills/`), and checks SSH/HTTP connectivity to the Pi.
 
 Useful flags:
 
 - `--host <user@host>` / `--url <base-url>` / `--theme <auto|dark|light>` — write defaults to `~/.config/remote-view/config`
-- `--opencode-native` — also symlink into `~/.config/opencode/skills/remote-view`
+- `--opencode-native` — also symlink into `~/.config/opencode/skills/`
 - `--no-prompt` — skip interactive SSH key setup prompts
 - `--uninstall` — remove symlinks
 
-Verify connectivity anytime with `drop-html --check`. In prompts, tell the agent `use the /remote-view skill for this`.
+Verify connectivity anytime with `drop-html --check`. In prompts, tell the agent `use the /remote-view skill for this` or `use /tunel-view`.
 
 ### 3. Remote access (optional)
 
 `setup-pi.sh` installs `cloudflared` on the Pi for access outside your LAN.
 
-**Quick tunnel (no domain needed):**
+**Managed ephemeral quick tunnel (recommended, no domain needed):**
+
+`tunel-view` starts a detached `cloudflared` quick tunnel with a **12-hour default TTL** and clean spin-down:
+
+```bash
+# Tunnel the Pi remote-view server (12h default TTL)
+TUNNEL_URL="$(tunel-view up)"
+drop-html --id preview --url "$TUNNEL_URL" --title "Preview" <<< '<h1>Hello</h1>'
+
+# Or serve a local HTML file / folder + tunnel it (12h TTL; edit the file in place)
+tunel-view up --serve /tmp/preview.html
+
+# Or tunnel an existing local dev server
+tunel-view up --port 5173
+
+# Inspect or cancel on demand
+tunel-view status
+tunel-view down
+```
+
+Running `tunel-view up` again reuses the active server and tunnel when the target matches (so updating the file works on refresh), or kills the previous tunnel/managed server when switching targets or passing `--restart`. Pass `--ttl <duration>` only if you need a custom lifetime (never exceed `12h` unless explicitly requested).
+
+**Foreground quick tunnel directly on the Pi:**
 
 ```bash
 ~/remote-view-pi/quick-tunnel.sh
@@ -144,10 +166,10 @@ Fragments are wrapped in [template/base.html](template/base.html) using [assets/
 
 ## Repo layout
 
-- [bin/drop-html](bin/drop-html), [bin/drop-dir](bin/drop-dir), [bin/remote-view-common.sh](bin/remote-view-common.sh) — CLI scripts and SSH/management helpers
+- [bin/drop-html](bin/drop-html), [bin/drop-dir](bin/drop-dir), [bin/tunel-view](bin/tunel-view), [bin/remote-view-common.sh](bin/remote-view-common.sh) — CLI scripts and SSH/management helpers
 - [template/base.html](template/base.html), [assets/](assets) — HTML shell, CSS/JS, and fonts
 - [pi/](pi) — Pi provisioning (`setup-pi.sh`), `cloudflared` helpers, and cleanup cron script
-- [skills/remote-view/](skills/remote-view) — Agent skill and component reference
+- [skills/remote-view/](skills/remote-view), [skills/tunel-view/](skills/tunel-view) — Agent skills and component reference
 - [examples/showcase.html](examples/showcase.html) — Example fragment
 - [install.sh](install.sh) — Workstation installer
 
