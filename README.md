@@ -1,178 +1,85 @@
 # remote-view
 
-An always-on **LAN & Tunneled Artifact Drop-Box** powered by a Raspberry Pi (`lighttpd` + `cloudflared`) and a zero-boilerplate HTML shell (`drop-html` / `drop-dir`), built for **Antigravity** and **OpenCode**.
+A small tool for publishing HTML fragments and static build directories from a workstation to a Raspberry Pi over SSH (`lighttpd` + optional `cloudflared`). Built for coding agents like Antigravity and OpenCode.
 
-## Why this exists
+## Why
 
-When coding agents generate HTML explanations, charts, diagrams, or static build outputs:
+- **No per-project dev servers:** When working remotely from a phone, you don't have to spin up ad-hoc HTTP servers or port forwards for every diagram or report. Push it with `drop-html` or `drop-dir` and open `http://bluyeti-pi.local/<id>.html`.
+- **Works with browser tools:** Agent browser tools often struggle with `file://` URLs. Serving over HTTP lets the agent open and inspect the rendered page.
+- **Less HTML boilerplate:** For quick explanations or dashboards, the agent only writes the inner `<main>` fragment and `drop-html` wraps it in [template/base.html](template/base.html). Full apps (`dist/`, `build/`) can be uploaded as-is with `drop-dir`.
 
-1. **Zero tunnel/server hassle from your phone:** When driving your workstation remotely from a phone, you don't need to spin up ad-hoc Python HTTP servers for each output. Publish with `drop-html` or `drop-dir` and open `http://bluyeti-pi.local/<id>.html` on your LAN—or via **Cloudflare Tunnel (`cloudflared`)** when away from home.
-2. **Agents can actually see their own output:** Browser tools (such as Antigravity's built-in browser subagent) often cannot open or render local `file://` paths reliably. Serving over HTTP lets the agent inspect and verify the live rendered page.
-3. **~80% fewer tokens for HTML views:** For quick explanations/dashboards, agents write only the inner `<main>` HTML fragment; `drop-html` wraps it in [template/base.html](template/base.html). For full apps/bundles (`dist/`, `build/`), `drop-dir` uploads the entire directory.
+## Setup
 
-## Architecture
+### 1. Raspberry Pi
 
-```text
-┌─────────────────────────────┐   fragment / dist/   ┌───────────────────────────┐
-│ Coding Agent                │ ───────────────────▶ │ drop-html / drop-dir      │
-│ (Antigravity / OpenCode)    │                      └─────────────┬─────────────┘
-└─────────────────────────────┘                                    │ SSH push
-        ▲                                                          ▼
-        │ browser inspection                         ┌───────────────────────────┐
-        │                                            │ Raspberry Pi              │
-┌───────┴─────────────────────┐    LAN :80           │ lighttpd (/var/www/drops) │
-│ Phone / Desktop / Browser   │ ◀─────────────────── │ + cloudflared tunnel      │
-└─────────────────────────────┘   or HTTPS tunnel    └───────────────────────────┘
-```
-
-## Repository Layout
-
-| Path | Purpose |
-| :--- | :--- |
-| [bin/drop-html](bin/drop-html) | Publishes HTML fragments (wrapped in `base.html`) or standalone `--raw` HTML files |
-| [bin/drop-dir](bin/drop-dir) | Publishes static build output directories (`dist/`, `build/`, `out/`) via `tar` over SSH |
-| [bin/remote-view-common.sh](bin/remote-view-common.sh) | Shared config, validation, SSH, `--list`, `--rm`, `--prune`, and `--check` helpers |
-| [template/base.html](template/base.html) | Minimal paper-inspired HTML shell (`{{RV_CSS_TAG}}` / `{{RV_JS_TAG}}`) |
-| [assets/rv.css](assets/rv.css) | Self-owned zero-build design system (warm paper light/dark palettes, sidebar + burger drawer, cards, stats, tabs, menus) |
-| [assets/rv.js](assets/rv.js) | Vanilla JS controller with 54 bundled Tabler icons, theme toggle, drawer, tabs, menus, copy-code, and table wrappers |
-| [assets/fonts](assets/fonts) | Self-hosted WOFF2 fonts (`Fraunces 800`, `IBM Plex Sans 400/600`, `JetBrains Mono 400`) |
-| [pi/setup-pi.sh](pi/setup-pi.sh) | Idempotent Pi setup: installs `lighttpd`, `avahi-daemon`, `cloudflared`, config, and cleanup cron |
-| [pi/setup-cloudflared.sh](pi/setup-cloudflared.sh) | Configures a persistent named Cloudflare Tunnel (`view.<domain>` and optional `ssh.<domain>`) |
-| [pi/quick-tunnel.sh](pi/quick-tunnel.sh) | Starts an ephemeral `trycloudflare.com` tunnel to the Pi's drop server |
-| [pi/cloudflared-config.yml.example](pi/cloudflared-config.yml.example) | Example `cloudflared` ingress config for HTTP drops + SSH |
-| [pi/remote-view-cleanup.sh](pi/remote-view-cleanup.sh) | Deletes file and directory drops older than N days (default 30) while preserving `index.html` |
-| [skills/remote-view/SKILL.md](skills/remote-view/SKILL.md) | Publishing guide skill for Antigravity and OpenCode (`use the /remote-view skill for this`) |
-| [skills/remote-view/references/components.md](skills/remote-view/references/components.md) | Copy-paste component patterns for fragments |
-| [examples/showcase.html](examples/showcase.html) | Sample fragment demonstrating cards, tabs, callouts, charts, Mermaid, tables, code, and math |
-| [install.sh](install.sh) | Symlinks `drop-html`/`drop-dir` into `~/.local/bin` and the skill into Antigravity & OpenCode global folders |
-
----
-
-## 1. Raspberry Pi Setup
-
-Run these steps once to turn your Pi into a 24/7 artifact server (~2 MB RAM) with `cloudflared` ready for remote tunnels.
-
-### 1.1 Copy SSH key for non-interactive uploads
+Copy your SSH key so uploads don't prompt for a password:
 
 ```bash
-ssh-copy-id lcarv@bluyeti-pi.local   # replace user/host if yours differs
+ssh-copy-id lcarv@bluyeti-pi.local
 ```
 
-### 1.2 Install `lighttpd`, `avahi-daemon`, and `cloudflared` on the Pi
+Copy `pi/` to the Pi and run the setup script:
 
 ```bash
-ssh lcarv@bluyeti-pi.local "rm -rf ~/remote-view-pi"
 scp -r pi lcarv@bluyeti-pi.local:~/remote-view-pi
 ssh -t lcarv@bluyeti-pi.local "cd ~/remote-view-pi && ./setup-pi.sh"
 ```
 
-What `pi/setup-pi.sh` does:
-- Installs `lighttpd` and `avahi-daemon` (for `.local` mDNS).
-- Installs `cloudflared` (using `cloudflared-linux-arm` directly on `armv6l` Pis so it never hits `Illegal instruction` from ARMv7 `armhf` builds, and Cloudflare's APT repo on newer Pis).
-- Creates `/var/www/drops` owned by your SSH user (`0755`) so `drop-html` / `drop-dir` can write `0644`/`0755` artifacts.
-- Configures `/etc/lighttpd/conf-available/99-remote-view.conf` (`server.document-root := "/var/www/drops"` on port 80 with directory listing enabled) and enables `lighttpd`.
-- Installs a weekly cleanup cron (`/etc/cron.weekly/remote-view-cleanup`) pruning drops older than `30` days (`REMOTE_VIEW_CLEANUP_DAYS=0` disables it).
+`setup-pi.sh` installs `lighttpd`, `avahi-daemon` (for `.local` mDNS), and `cloudflared`, creates `/var/www/drops` owned by your SSH user, serves it on port 80, and sets up a weekly cron job to delete drops older than 30 days (`REMOTE_VIEW_CLEANUP_DAYS=0` disables cleanup).
 
-> **Tip:** Set `REMOTE_VIEW_NO_LISTING=1 ./setup-pi.sh` if you expose the Pi publicly via Cloudflare Tunnel without Cloudflare Access and want to disable directory listings at `/`.
+If you expose the server publicly without Cloudflare Access, run `REMOTE_VIEW_NO_LISTING=1 ./setup-pi.sh` to disable directory listings at `/`.
 
----
+### 2. Workstation
 
-## 2. Remote Access with `cloudflared` (When Not at Home)
-
-`pi/setup-pi.sh` installs `cloudflared` on the Pi so you can reach your drops (and optionally SSH into the Pi) from anywhere.
-
-### Option A: Quick Tunnel (no domain required)
-
-On the Pi, start an instant ephemeral HTTPS tunnel:
-
-```bash
-~/remote-view-pi/quick-tunnel.sh
-# -> prints https://<random>.trycloudflare.com
-```
-
-### Option B: Persistent Named Tunnel (recommended)
-
-If you have a domain on Cloudflare, run on the Pi:
-
-```bash
-~/remote-view-pi/setup-cloudflared.sh remote-view view.yourdomain.com
-```
-
-To also expose SSH over the tunnel (so `drop-html` / `drop-dir` work when your laptop is off the home LAN):
-
-```bash
-~/remote-view-pi/setup-cloudflared.sh remote-view view.yourdomain.com pi-ssh.yourdomain.com
-```
-
-Then on your workstation:
-1. Point `~/.config/remote-view/config` at your tunnel URL:
-   ```bash
-   REMOTE_VIEW_PUBLIC_URL="https://view.yourdomain.com"
-   ```
-2. Optional `~/.ssh/config` entry for off-LAN uploads via `cloudflared access ssh`:
-   ```sshconfig
-   Host pi-ssh.yourdomain.com
-     User lcarv
-     ProxyCommand cloudflared access ssh --hostname %h
-   ```
-3. **Recommended security:** Put `https://view.yourdomain.com` behind a **Cloudflare Zero Trust Access** policy (e.g., email OTP) or run `setup-pi.sh` with `REMOTE_VIEW_NO_LISTING=1`.
-
----
-
-## 3. New Computer Setup (`install.sh`)
-
-When setting up `remote-view` on a new workstation (assuming your Pi is already running), clone this repo and run `./install.sh`:
+Clone the repo and run:
 
 ```bash
 ./install.sh
 ```
 
-What `./install.sh` does automatically:
-- Symlinks `~/.local/bin/drop-html` → [bin/drop-html](bin/drop-html) and `~/.local/bin/drop-dir` → [bin/drop-dir](bin/drop-dir)
-- Symlinks `~/.gemini/config/skills/remote-view` → [skills/remote-view](skills/remote-view) (**Antigravity** global skill)
-- Symlinks `~/.agents/skills/remote-view` → [skills/remote-view](skills/remote-view) (**OpenCode** & universal cross-agent global skill)
-- **Connects to your Pi and checks readiness:**
-  - If passwordless SSH and the Pi HTTP server already work, it syncs `/_assets/` immediately and confirms you're ready.
-  - If SSH key auth isn't configured yet on the new computer, it offers interactively to run `ssh-keygen` (if needed) + `ssh-copy-id`, or prints the exact commands to run (`--no-prompt` skips interactive prompts).
-  - If the Pi hasn't been provisioned yet, it prints the `scp` + `setup-pi.sh` commands.
+This symlinks `drop-html` and `drop-dir` into `~/.local/bin`, installs the [remote-view skill](skills/remote-view/SKILL.md) for Antigravity (`~/.gemini/config/skills/remote-view`) and OpenCode (`~/.agents/skills/remote-view`), and checks SSH/HTTP connectivity to the Pi.
 
-Useful `install.sh` flags:
-- `--host <user@host>` / `--url <base-url>` / `--theme <auto|dark|light>`: save custom defaults into `~/.config/remote-view/config`
-- `--opencode-native`: also symlink into `~/.config/opencode/skills/remote-view`
-- `--no-prompt`: non-interactive mode (prints setup hints instead of prompting)
-- `--uninstall`: remove installed symlinks
+Useful flags:
 
-Then in prompts to Antigravity or OpenCode, simply tell the agent:
+- `--host <user@host>` / `--url <base-url>` / `--theme <auto|dark|light>` — write defaults to `~/.config/remote-view/config`
+- `--opencode-native` — also symlink into `~/.config/opencode/skills/remote-view`
+- `--no-prompt` — skip interactive SSH key setup prompts
+- `--uninstall` — remove symlinks
 
-> `use the /remote-view skill for this`
+Verify connectivity anytime with `drop-html --check`. In prompts, tell the agent `use the /remote-view skill for this`.
 
-You can re-verify workstation-to-Pi connectivity anytime with:
+### 3. Remote access (optional)
+
+`setup-pi.sh` installs `cloudflared` on the Pi for access outside your LAN.
+
+**Quick tunnel (no domain needed):**
 
 ```bash
-drop-html --check
+~/remote-view-pi/quick-tunnel.sh
+# prints https://<random>.trycloudflare.com
 ```
 
----
-
-## 4. Configuration (Optional)
-
-Override defaults via environment variables or `~/.config/remote-view/config`:
+**Named tunnel (with a Cloudflare domain):**
 
 ```bash
-# ~/.config/remote-view/config
-REMOTE_VIEW_SSH_HOST="lcarv@bluyeti-pi.local"
-REMOTE_VIEW_PUBLIC_URL="http://bluyeti-pi.local"
-REMOTE_VIEW_REMOTE_DIR="/var/www/drops"
-REMOTE_VIEW_THEME="auto"   # auto | dark | light
+~/remote-view-pi/setup-cloudflared.sh remote-view view.yourdomain.com
+# or also tunnel SSH:
+~/remote-view-pi/setup-cloudflared.sh remote-view view.yourdomain.com pi-ssh.yourdomain.com
 ```
 
-Precedence: CLI flags (`--host`, `--url`, `--theme`) > environment variables > `~/.config/remote-view/config` > built-in defaults.
+Then set `REMOTE_VIEW_PUBLIC_URL="https://view.yourdomain.com"` in `~/.config/remote-view/config`. If you tunneled SSH too, add this to `~/.ssh/config` on your workstation:
 
----
+```sshconfig
+Host pi-ssh.yourdomain.com
+  User lcarv
+  ProxyCommand cloudflared access ssh --hostname %h
+```
 
-## 5. Usage
+Put `view.yourdomain.com` behind Cloudflare Zero Trust Access (or use `REMOTE_VIEW_NO_LISTING=1`) if you don't want drops publicly listable.
 
-### HTML fragments (`drop-html`)
+## Usage
+
+**HTML fragment:**
 
 ```bash
 drop-html --title "Cache Architecture" <<'EOF'
@@ -186,25 +93,25 @@ EOF
 # -> http://bluyeti-pi.local/k4m9x2.html
 ```
 
-### Standalone HTML files (`--raw`)
+**Standalone HTML file:**
 
 ```bash
 drop-html --raw --id report report.html
 ```
 
-### Build outputs & static sites (`drop-dir`)
+**Static build directory:**
 
 ```bash
-# Build with relative base so assets resolve under /<id>/
+# Use a relative base so assets resolve under /<id>/
 vite build --base=./
 drop-dir dist/
 # -> http://bluyeti-pi.local/m8q3z1/
 
-# Or update a fixed slug on every rebuild
+# Fixed slug for repeated builds
 drop-dir --id my-app dist/
 ```
 
-### Local preview & management
+**Local preview & cleanup:**
 
 ```bash
 drop-html --local --title "Showcase" examples/showcase.html
@@ -215,22 +122,37 @@ drop-html --rm k4m9x2
 drop-html --prune 14
 ```
 
----
+## Configuration
 
-## 6. Local Paper UI Kit & Component Stack
+Defaults can be set in `~/.config/remote-view/config` or via environment variables (precedence: CLI flags > env vars > config file > built-in defaults):
 
-Instead of third-party CSS frameworks or icon CDNs, `remote-view` ships its own lightweight, zero-build UI kit in [assets/rv.css](assets/rv.css) and [assets/rv.js](assets/rv.js) (automatically content-hashed and synced to `/var/www/drops/_assets/` on the Pi, or inlined when using `--local`):
+```bash
+REMOTE_VIEW_SSH_HOST="lcarv@bluyeti-pi.local"
+REMOTE_VIEW_PUBLIC_URL="http://bluyeti-pi.local"
+REMOTE_VIEW_REMOTE_DIR="/var/www/drops"
+REMOTE_VIEW_THEME="auto"   # auto | dark | light
+```
 
-- **Warm Paper Light & Dark Modes:** Archival ivory light mode (`#f7f4ec`) and warm charcoal dark mode (`#151412`), paired with bold **Fraunces** display headings, **IBM Plex Sans** body copy, and **JetBrains Mono** code—served from local WOFF2 files in [assets/fonts](assets/fonts).
-- **Classless Semantic Base:** Headings, paragraphs, lists, blockquotes, `<details>`, `<table>`, and `<pre><code>` look crisp with zero classes—avoiding card/component pollution when plain prose works best.
-- **Built-in Components:** Optional `.rv-sidebar` (sticky on desktop, auto-collapses into a topbar burger drawer on mobile), `.card`, `.stat`, `.badge`, `.callout`, `[data-tabs]`, `.rv-menu[popover]`, `.steps`, and `.grid-2` / `.grid-3` / `.grid-4`.
-- **Tabler Icons:** 54 curated [Tabler Icons](https://github.com/tabler/tabler-icons) bundled locally inside `rv.js` (`<i data-icon="bolt"></i>`) with automatic fallback for any other Tabler icon name.
-- **Code, Charts, Diagrams, Math:** Highlight.js (`11.12.0`, theme-synced + Copy button), Chart.js (`4.6.1`), Mermaid (`12.3.0`), and KaTeX (`0.19.1` scoped to `$$`, `\[`, `\(`).
+## Template & UI assets
 
----
+Fragments are wrapped in [template/base.html](template/base.html) using [assets/rv.css](assets/rv.css) and [assets/rv.js](assets/rv.js), which are content-hashed and synced to `/var/www/drops/_assets/` (or inlined with `--local`).
 
-## 7. Troubleshooting
+- Light and dark themes with self-hosted fonts (`Fraunces`, `IBM Plex Sans`, `JetBrains Mono` in [assets/fonts](assets/fonts))
+- Plain semantic HTML styling plus optional helpers (`.rv-sidebar`, `.card`, `.stat`, `.badge`, `.callout`, `[data-tabs]`, `.rv-menu[popover]`, `.steps`, `.grid-2`/`3`/`4`)
+- 54 bundled Tabler icons (`<i data-icon="bolt"></i>`)
+- Built-in Highlight.js, Chart.js, Mermaid, and KaTeX (`$$`, `\[`, `\(`) — see [examples/showcase.html](examples/showcase.html) and [skills/remote-view/references/components.md](skills/remote-view/references/components.md)
 
-- **`.local` doesn't resolve on Android / away from home:** Use a Cloudflare Tunnel URL (`REMOTE_VIEW_PUBLIC_URL="https://view.yourdomain.com"`) or your Pi's LAN IP (`http://192.168.1.97`).
-- **Build output assets return 404 under `/<id>/`:** Check if `index.html` references `/assets/...` from `/`; rebuild with a relative base (e.g., `vite build --base=./`).
-- **`Permission denied (publickey)` on `drop-html` / `drop-dir`:** Run `ssh-copy-id <user>@bluyeti-pi.local`. `BatchMode=yes` is enabled by default so agents fail fast instead of hanging on password prompts.
+## Repo layout
+
+- [bin/drop-html](bin/drop-html), [bin/drop-dir](bin/drop-dir), [bin/remote-view-common.sh](bin/remote-view-common.sh) — CLI scripts and SSH/management helpers
+- [template/base.html](template/base.html), [assets/](assets) — HTML shell, CSS/JS, and fonts
+- [pi/](pi) — Pi provisioning (`setup-pi.sh`), `cloudflared` helpers, and cleanup cron script
+- [skills/remote-view/](skills/remote-view) — Agent skill and component reference
+- [examples/showcase.html](examples/showcase.html) — Example fragment
+- [install.sh](install.sh) — Workstation installer
+
+## Troubleshooting
+
+- **`.local` doesn't resolve (Android or off-LAN):** Set `REMOTE_VIEW_PUBLIC_URL` to your `cloudflared` URL or the Pi's LAN IP (e.g. `http://192.168.1.97`).
+- **Assets 404 inside `drop-dir` output:** `index.html` is likely referencing `/assets/...` from root; rebuild with a relative base (`vite build --base=./`).
+- **`Permission denied (publickey)`:** Run `ssh-copy-id <user>@bluyeti-pi.local`. `BatchMode=yes` is enabled so commands fail immediately instead of hanging on a password prompt.
