@@ -2,28 +2,26 @@
 set -euo pipefail
 
 RV_PROG="drop-html"
-SCRIPT_DIR="$(cd -P -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
-# Fall back to POSIX symlink resolution if readlink -f wasn't available
-if [[ ! -r "$SCRIPT_DIR/remote-view-common.sh" ]]; then
-  _src="${BASH_SOURCE[0]}"
-  while [[ -L "$_src" ]]; do
-    _dir="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
-    _src="$(readlink -- "$_src")"
-    [[ "$_src" != /* ]] && _src="$_dir/$_src"
-  done
-  SCRIPT_DIR="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
-fi
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
+  _src="$(readlink -- "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "$_src")" && pwd)"
 
 # shellcheck source=bin/remote-view-common.sh
 source "$SCRIPT_DIR/remote-view-common.sh"
 REPO_DIR="$(cd -P -- "$SCRIPT_DIR/.." && pwd)"
 rv_load_config "$REPO_DIR"
 
+ASSETS_DIR="${REPO_DIR}/assets"
+
 usage() {
   cat <<'EOF'
 Usage: drop-html [OPTIONS] [FILE]
 
-Wrap an HTML fragment in the remote-view shell and publish it to your Pi,
+Wrap an HTML fragment in the remote-view paper shell and publish it to your Pi,
 or save/inspect it locally. Reads from stdin when FILE is omitted or '-'.
 If FILE is a directory, delegates to drop-dir.
 
@@ -33,9 +31,10 @@ Options:
       --theme <mode>       Default theme: dark | light | auto (default: dark)
       --raw                Upload input verbatim without wrapping in base.html
                            (auto-enabled if input starts with <!DOCTYPE or <html)
-      --local              Write assembled HTML to /tmp/remote-view-<id>.html (no SSH)
-  -o, --out <path>         Write assembled HTML to <path> instead of uploading
-      --stdout             Print assembled HTML to stdout without uploading
+      --local              Write self-contained HTML to /tmp/remote-view-<id>.html (no SSH)
+  -o, --out <path>         Write self-contained HTML to <path> instead of uploading
+      --stdout             Print self-contained HTML to stdout without uploading
+      --sync-assets        Force re-upload of local UI assets (CSS/JS/fonts) to Pi /_assets/
       --host <user@host>   Override SSH target (default: $REMOTE_VIEW_SSH_HOST)
       --url <base-url>     Override public base URL (default: $REMOTE_VIEW_PUBLIC_URL)
       --list               List published drops on the Pi
@@ -62,6 +61,43 @@ html_escape() {
   printf '%s' "$s"
 }
 
+compute_assets_hash() {
+  local sum_cmd="sha256sum"
+  command -v sha256sum >/dev/null 2>&1 || sum_cmd="shasum -a 256"
+  cat "$ASSETS_DIR/rv.css" "$ASSETS_DIR/rv.js" | $sum_cmd | awk '{print substr($1, 1, 10)}'
+}
+
+ensure_remote_assets() {
+  local hash="$1"
+  local force="${2:-0}"
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/remote-view"
+  local host_key
+  host_key="$(printf '%s' "${REMOTE_VIEW_SSH_HOST}:${REMOTE_VIEW_REMOTE_DIR}" | tr -c 'a-zA-Z0-9_-' '_')"
+  local stamp="${cache_dir}/synced-${host_key}-${hash}"
+
+  if [[ "$force" -eq 0 && -f "$stamp" ]]; then
+    return 0
+  fi
+
+  local tmp_stage
+  tmp_stage="$(mktemp -d)"
+  mkdir -p "$tmp_stage/fonts"
+  cp "$ASSETS_DIR/rv.css" "$tmp_stage/rv.${hash}.css"
+  cp "$ASSETS_DIR/rv.js" "$tmp_stage/rv.${hash}.js"
+  if [[ -d "$ASSETS_DIR/fonts" ]]; then
+    cp "$ASSETS_DIR/fonts/"* "$tmp_stage/fonts/" 2>/dev/null || true
+  fi
+
+  if ! tar -C "$tmp_stage" -cf - . | rv_ssh "umask 022 && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR/_assets' && tar -C '$REMOTE_VIEW_REMOTE_DIR/_assets' -xf - && chmod -R a+rX -- '$REMOTE_VIEW_REMOTE_DIR/_assets'"; then
+    rm -rf -- "$tmp_stage"
+    return 1
+  fi
+
+  rm -rf -- "$tmp_stage"
+  mkdir -p "$cache_dir"
+  touch "$stamp"
+}
+
 assemble_html() {
   local template_file="$1"
   local content_file="$2"
@@ -69,10 +105,32 @@ assemble_html() {
   local drop_id="$4"
   local generated_at="$5"
   local theme_mode="$6"
+  local inline_assets="$7"
+  local assets_hash="$8"
 
-  local html_class="wa-dark"
+  local html_class="rv-dark"
   if [[ "$theme_mode" == "light" ]]; then
-    html_class="wa-light"
+    html_class="rv-light"
+  fi
+
+  local css_tag_file js_tag_file
+  css_tag_file="$(mktemp)"
+  js_tag_file="$(mktemp)"
+
+  if [[ "$inline_assets" -eq 1 ]]; then
+    {
+      echo "<style>"
+      cat "$ASSETS_DIR/rv.css"
+      echo "</style>"
+    } > "$css_tag_file"
+    {
+      echo '<script type="module">'
+      cat "$ASSETS_DIR/rv.js"
+      echo "</script>"
+    } > "$js_tag_file"
+  else
+    printf '  <link rel="stylesheet" href="/_assets/rv.%s.css">\n' "$assets_hash" > "$css_tag_file"
+    printf '  <script type="module" src="/_assets/rv.%s.js"></script>\n' "$assets_hash" > "$js_tag_file"
   fi
 
   RV_TITLE="$(html_escape "$title")" \
@@ -81,6 +139,8 @@ assemble_html() {
   RV_HTML_CLASS="$html_class" \
   RV_THEME_MODE="$theme_mode" \
   RV_CONTENT_FILE="$content_file" \
+  RV_CSS_TAG_FILE="$css_tag_file" \
+  RV_JS_TAG_FILE="$js_tag_file" \
   awk '
     function replace_all(str, pat, rep,    idx, out, plen) {
       out = ""
@@ -91,6 +151,12 @@ assemble_html() {
       }
       return out str
     }
+    function print_file(fpath,    fline) {
+      while ((getline fline < fpath) > 0) {
+        print fline
+      }
+      close(fpath)
+    }
     BEGIN {
       t = ENVIRON["RV_TITLE"]
       d = ENVIRON["RV_DROP_ID"]
@@ -98,14 +164,12 @@ assemble_html() {
       hc = ENVIRON["RV_HTML_CLASS"]
       tm = ENVIRON["RV_THEME_MODE"]
       cf = ENVIRON["RV_CONTENT_FILE"]
+      csf = ENVIRON["RV_CSS_TAG_FILE"]
+      jsf = ENVIRON["RV_JS_TAG_FILE"]
     }
-    /^[[:space:]]*\{\{CONTENT\}\}[[:space:]]*$/ {
-      while ((getline cline < cf) > 0) {
-        print cline
-      }
-      close(cf)
-      next
-    }
+    /^[[:space:]]*\{\{CONTENT\}\}[[:space:]]*$/ { print_file(cf); next }
+    /^[[:space:]]*\{\{RV_CSS_TAG\}\}[[:space:]]*$/ { print_file(csf); next }
+    /^[[:space:]]*\{\{RV_JS_TAG\}\}[[:space:]]*$/ { print_file(jsf); next }
     {
       line = $0
       line = replace_all(line, "{{TITLE}}", t)
@@ -116,6 +180,8 @@ assemble_html() {
       print line
     }
   ' "$template_file"
+
+  rm -f -- "$css_tag_file" "$js_tag_file"
 }
 
 ORIG_ARGS=("$@")
@@ -126,6 +192,7 @@ RAW_MODE=0
 LOCAL_MODE=0
 OUT_PATH=""
 STDOUT_MODE=0
+SYNC_ASSETS=0
 INPUT_FILE="-"
 ACTION="publish"
 ACTION_ARG=""
@@ -165,6 +232,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --stdout)
       STDOUT_MODE=1
+      shift
+      ;;
+    --sync-assets)
+      SYNC_ASSETS=1
       shift
       ;;
     --host)
@@ -248,6 +319,12 @@ trap 'rm -f -- "$TMP_IN" "$TMP_OUT"' EXIT
 
 if [[ "$INPUT_FILE" == "-" ]]; then
   if [[ -t 0 ]]; then
+    if [[ "$SYNC_ASSETS" -eq 1 ]]; then
+      ASSETS_HASH="$(compute_assets_hash)"
+      ensure_remote_assets "$ASSETS_HASH" 1 || rv_die "failed to sync assets to $REMOTE_VIEW_SSH_HOST"
+      echo "Synced _assets (rv.${ASSETS_HASH}.css / rv.${ASSETS_HASH}.js)"
+      exit 0
+    fi
     rv_die "no input provided on stdin and no file argument given (try --help)"
   fi
   cat > "$TMP_IN"
@@ -266,11 +343,19 @@ if [[ "$RAW_MODE" -eq 0 ]]; then
   fi
 fi
 
-if [[ "$RAW_MODE" -eq 1 ]]; then
-  cp -- "$TMP_IN" "$TMP_OUT"
-else
+INLINE_ASSETS=0
+if [[ "$STDOUT_MODE" -eq 1 || -n "$OUT_PATH" || "$LOCAL_MODE" -eq 1 ]]; then
+  INLINE_ASSETS=1
+fi
+
+ASSETS_HASH=""
+if [[ "$RAW_MODE" -eq 0 ]]; then
   [[ -r "$REMOTE_VIEW_TEMPLATE" ]] || rv_die "template not found: $REMOTE_VIEW_TEMPLATE"
-  assemble_html "$REMOTE_VIEW_TEMPLATE" "$TMP_IN" "$TITLE" "$ID" "$GENERATED_AT" "$THEME" > "$TMP_OUT"
+  [[ -r "$ASSETS_DIR/rv.css" && -r "$ASSETS_DIR/rv.js" ]] || rv_die "assets not found in $ASSETS_DIR"
+  ASSETS_HASH="$(compute_assets_hash)"
+  assemble_html "$REMOTE_VIEW_TEMPLATE" "$TMP_IN" "$TITLE" "$ID" "$GENERATED_AT" "$THEME" "$INLINE_ASSETS" "$ASSETS_HASH" > "$TMP_OUT"
+else
+  cp -- "$TMP_IN" "$TMP_OUT"
 fi
 
 if [[ "$STDOUT_MODE" -eq 1 ]]; then
@@ -290,6 +375,10 @@ if [[ "$LOCAL_MODE" -eq 1 ]]; then
   cp -- "$TMP_OUT" "$local_file"
   echo "$local_file"
   exit 0
+fi
+
+if [[ "$RAW_MODE" -eq 0 ]]; then
+  ensure_remote_assets "$ASSETS_HASH" "$SYNC_ASSETS" || rv_die "failed to sync UI assets to $REMOTE_VIEW_SSH_HOST:$REMOTE_VIEW_REMOTE_DIR/_assets"
 fi
 
 if ! rv_ssh "umask 022 && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR' && cat > '$REMOTE_VIEW_REMOTE_DIR/${ID}.html'" < "$TMP_OUT"; then

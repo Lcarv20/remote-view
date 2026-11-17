@@ -11,19 +11,27 @@ Three publishing modes are available depending on what is being shared:
 
 ## 1. HTML Fragment (`drop-html`)
 
-`drop-html` wraps an inner `<main>` HTML fragment inside the pre-styled `base.html` shell and prints the published URL.
+`drop-html` wraps an inner `<main>` HTML fragment inside the local paper-style shell (`assets/rv.css` + `assets/rv.js`) and prints the published URL.
 
 ```bash
-drop-html --title "Page Title" <<'EOF'
+drop-html --title "Page Title" <<'REMOTE_VIEW_EOF'
 <h1>Heading</h1>
-<wa-callout variant="brand">Fragment body here.</wa-callout>
-EOF
+<p>Plain prose, lists, tables, and code blocks are styled cleanly by default.</p>
+REMOTE_VIEW_EOF
 ```
 
 - Pass only the inner body HTML (`<!DOCTYPE>`, `<html>`, `<head>`, and CDN imports are already in `base.html`).
-- Quote `'EOF'` so `$` in shell snippets or math is not expanded by bash.
-- Preloaded libraries: **Web Awesome 3** (`<wa-card>`, `<wa-tab-group>`, `<wa-callout>`, `<wa-details>`, `<wa-badge>`, `<wa-icon>`), **Tailwind CSS v4**, **Highlight.js** (`<pre><code class="language-...">`), **Chart.js** (`Chart`), **Mermaid v12** (`<pre class="mermaid">`), **KaTeX** (`$$...$$`, `\[...\]`, `\(...\)`), and auto-scrolled `<table>` wrappers.
-- See [references/components.md](references/components.md) for component markup examples.
+- Use a distinct quoted heredoc delimiter (e.g. `<<'REMOTE_VIEW_EOF'`) if your fragment contains `EOF` or `$`.
+- **Keep layouts clean and restrained:** The UI components below are optional tools, not a checklist—use only what clarifies the content. Prefer plain headings, prose, lists, and tables over wrapping every section in `.card` boxes (avoid card pollution).
+
+### Available Local Stack & Primitives
+
+- **Typography & Layout:** `h1`/`h2` display serif (`Fraunces`), readable body (`IBM Plex Sans`), `.grid-2`, `.grid-3`, `.grid-4`, `.stack`, `.row`, `.split`, `.muted`, `.mono`.
+- **Optional Components:** `<article class="card">`, `<article class="stat">`, `<span class="badge [brand|success|warning|danger] pill">`, `<aside class="callout [info|success|warning|danger]">`, `<div class="tabs" data-tabs>`, `<ol class="steps">`, native `<details>`, `.btn`, and `.rv-menu[popover]` dropdowns.
+- **Navigation Sidebar + Mobile Burger Drawer:** Include `<nav class="rv-sidebar" aria-label="Sections">...</nav>` inside the fragment for a sticky desktop sidebar that turns into a topbar burger drawer on mobile.
+- **Tabler Icons (local):** `<i data-icon="bolt"></i>` (54 core icons bundled locally; any other Tabler outline icon name resolves automatically).
+- **Code, Charts, Diagrams, Math:** `<pre><code class="language-...">` (Highlight.js + language chip + Copy), `<div class="chart-box"><canvas id="c1"></canvas></div>` (`Chart`), `<pre class="mermaid">...</pre>` (Mermaid v12), `<table>` (auto-scrolled), and KaTeX (`$$...$$`, `\[...\]`, `\(...\)`).
+- See [references/components.md](references/components.md) for markup examples.
 
 ## 2. Standalone HTML File (`drop-html --raw`)
 
@@ -50,7 +58,8 @@ drop-dir --id preview-v2 dist/
 
 - `--id <slug>`: stable custom URL slug instead of a random 6-character ID
 - `--theme dark|light|auto`: default color scheme for wrapped fragments (default: `dark`)
-- `--local` / `-o <path>`: write locally (`/tmp/remote-view-<id>*`) without SSH
+- `--local` / `-o <path>`: write self-contained HTML locally without SSH
+- `--sync-assets`: force re-upload of `assets/rv.*` and `assets/fonts/*` to `/_assets/` on the Pi
 - `--host <user@host>` / `--url <base-url>`: override configured SSH target or public URL
 - `--list`, `--rm <id>`, `--prune <days>`, `--check`: inspect, remove, or diagnose drops on the server
 

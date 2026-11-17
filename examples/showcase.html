@@ -1,125 +1,131 @@
-<section class="space-y-2">
-  <div class="flex flex-wrap items-center gap-2">
-    <wa-badge variant="brand">LAN Drop-Box</wa-badge>
-    <wa-badge variant="success">Zero-Build</wa-badge>
-    <wa-badge variant="neutral">Web Awesome + Tailwind v4</wa-badge>
+<nav class="rv-sidebar" aria-label="Contents">
+  <span class="rv-sidebar-title">Sections</span>
+  <ul>
+    <li><a href="#overview" class="active"><i data-icon="home"></i> Overview</a></li>
+    <li><a href="#architecture"><i data-icon="git-branch"></i> Architecture</a></li>
+    <li><a href="#benchmarks"><i data-icon="chart-bar"></i> Benchmarks</a></li>
+    <li><a href="#commands"><i data-icon="terminal-2"></i> Commands</a></li>
+  </ul>
+</nav>
+
+<section id="overview" class="stack">
+  <div class="row">
+    <span class="badge brand pill"><i data-icon="bolt"></i> Local Paper UI</span>
+    <span class="badge success pill">lighttpd :80</span>
+    <span class="badge pill">Zero UI CDN</span>
   </div>
   <h1>Remote-View Showcase</h1>
-  <p class="rv-muted">
-    Agents output only the inner HTML fragment; <code>drop-html</code> wraps it in the preloaded shell,
-    pushes it over SSH to your Raspberry Pi, and returns a clickable LAN URL.
+  <p class="muted">
+    A calm, paper-inspired reading shell served directly from your Raspberry Pi. Plain prose,
+    tables, diagrams, and code stay clean and legible without wrapping every paragraph in cards.
   </p>
 </section>
 
-<wa-callout variant="brand">
-  <wa-icon slot="icon" name="circle-info"></wa-icon>
-  <strong>Phone &amp; Browser-Tool Ready:</strong> Because drops are served over plain HTTP on your LAN,
-  both your mobile browser and agent browser tools can inspect the exact same rendered output.
-</wa-callout>
+<aside class="callout info">
+  <i class="callout-icon" data-icon="info-circle"></i>
+  <div class="callout-body">
+    <strong>Self-hosted assets:</strong> CSS, JS, fonts (<code>Fraunces</code>, <code>IBM Plex Sans</code>,
+    <code>JetBrains Mono</code>), and 54 Tabler icons live locally under <code>/_assets/</code>.
+  </div>
+</aside>
 
-<section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-  <wa-card class="h-full">
-    <div slot="header" class="flex items-center justify-between">
-      <span class="font-semibold">RAM Footprint</span>
-      <wa-badge variant="success">~2 MB</wa-badge>
-    </div>
-    <p class="text-sm rv-muted m-0">Served 24/7 by <code>lighttpd</code> inside a systemd unit.</p>
-  </wa-card>
-  <wa-card class="h-full">
-    <div slot="header" class="flex items-center justify-between">
-      <span class="font-semibold">Token Burn</span>
-      <wa-badge variant="brand">-80%</wa-badge>
-    </div>
-    <p class="text-sm rv-muted m-0">No HTML head, CDN imports, or CSS boilerplate per drop.</p>
-  </wa-card>
-  <wa-card class="h-full">
-    <div slot="header" class="flex items-center justify-between">
-      <span class="font-semibold">Math Check</span>
-      <wa-badge variant="neutral">KaTeX</wa-badge>
-    </div>
-    <p class="text-sm m-0">Latency bound: \(T_{\text{total}} = T_{\text{ssh}} + T_{\text{http}}\)</p>
-  </wa-card>
+<section class="grid-3">
+  <article class="stat">
+    <div class="stat-label"><span>Pi Web Server</span><span class="badge success">lighttpd</span></div>
+    <div class="stat-value">~2.5 MB</div>
+    <div class="stat-note">RAM footprint on ARMv6</div>
+  </article>
+  <article class="stat">
+    <div class="stat-label"><span>Boilerplate Burn</span><span class="badge brand">-80%</span></div>
+    <div class="stat-value">~45 tok</div>
+    <div class="stat-note">Inner fragment only</div>
+  </article>
+  <article class="stat">
+    <div class="stat-label"><span>Formula Support</span><span class="badge">KaTeX</span></div>
+    <div class="stat-value">\(O(1)\)</div>
+    <div class="stat-note">Single <code>$PATH</code> stays safe</div>
+  </article>
 </section>
 
-<wa-tab-group>
-  <wa-tab panel="diagram">Architecture</wa-tab>
-  <wa-tab panel="chart">Metrics Chart</wa-tab>
-  <wa-tab panel="code">Publish Snippet</wa-tab>
+<h2 id="architecture">Architecture &amp; Delivery</h2>
+<p>
+  <code>drop-html</code> wraps inner fragments into a single page, while <code>drop-dir</code>
+  pushes full build directories (<code>dist/</code>, <code>build/</code>) over SSH.
+</p>
 
-  <wa-tab-panel name="diagram" active>
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Architecture Views">
+    <button type="button" role="tab" aria-selected="true" data-tab="diagram">Flow Diagram</button>
+    <button type="button" role="tab" data-tab="chart" id="benchmarks">Token Comparison</button>
+    <button type="button" role="tab" data-tab="code" id="commands">CLI Usage</button>
+  </div>
+
+  <section role="tabpanel" data-panel="diagram">
     <pre class="mermaid">
 flowchart LR
-  A["Coding Agent\n(Antigravity / OpenCode)"] -->|stdin HTML fragment| B["drop-html CLI"]
-  B -->|wrap in base.html| C["SSH Push"]
-  C -->|/var/www/drops/id.html| D["Raspberry Pi\n(lighttpd :80)"]
-  D -->|http://bluyeti-pi.local/id.html| E["Phone / Desktop / Agent Browser"]
+  A["Coding Agent"] -->|fragment| H["drop-html"]
+  A -->|dist/| D["drop-dir"]
+  H -->|SSH| PI["bluyeti-pi.local\nlighttpd :80"]
+  D -->|tar over SSH| PI
+  PI -->|LAN HTTP| U["Phone / Desktop / Browser"]
+  PI -.->|off-LAN| CF["cloudflared Tunnel"]
     </pre>
-  </wa-tab-panel>
+  </section>
 
-  <wa-tab-panel name="chart">
-    <div class="max-w-2xl mx-auto">
-      <canvas id="tokenChart" height="140"></canvas>
+  <section role="tabpanel" data-panel="chart" hidden>
+    <div class="chart-box">
+      <canvas id="tokenChart"></canvas>
     </div>
-  </wa-tab-panel>
+  </section>
 
-  <wa-tab-panel name="code">
-    <pre><code class="language-bash">drop-html --title "Cache Architecture" &lt;&lt;'EOF'
-&lt;h1&gt;Redis Write-Through Flow&lt;/h1&gt;
-&lt;pre class="mermaid"&gt;
-sequenceDiagram
-  App-&gt;&gt;Cache: write(key, val)
-  Cache-&gt;&gt;DB: persist(key, val)
-&lt;/pre&gt;
-EOF</code></pre>
-  </wa-tab-panel>
-</wa-tab-group>
+  <section role="tabpanel" data-panel="code" hidden>
+    <pre><code class="language-bash"># Publish an HTML fragment
+drop-html --title "Architecture Notes" &lt;&lt;'REMOTE_VIEW_EOF'
+&lt;h1&gt;Write-Through Cache&lt;/h1&gt;
+&lt;p&gt;No HTML head or CSS setup needed.&lt;/p&gt;
+REMOTE_VIEW_EOF
 
-<section class="space-y-3">
-  <h2>Component Comparison</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Capability</th>
-        <th>Library</th>
-        <th>Trigger Markup</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>UI Primitives</td>
-        <td>Web Awesome 3</td>
-        <td><code>&lt;wa-card&gt;</code>, <code>&lt;wa-tab-group&gt;</code>, <code>&lt;wa-callout&gt;</code></td>
-      </tr>
-      <tr>
-        <td>Layout Grids</td>
-        <td>Tailwind CSS v4</td>
-        <td><code>class="grid md:grid-cols-2 gap-4"</code></td>
-      </tr>
-      <tr>
-        <td>Syntax Highlighting</td>
-        <td>Highlight.js</td>
-        <td><code>&lt;pre&gt;&lt;code class="language-ts"&gt;</code></td>
-      </tr>
-      <tr>
-        <td>Diagrams</td>
-        <td>Mermaid v12</td>
-        <td><code>&lt;pre class="mermaid"&gt;</code></td>
-      </tr>
-      <tr>
-        <td>Charts</td>
-        <td>Chart.js v4</td>
-        <td><code>&lt;canvas&gt;</code> + <code>new Chart(...)</code></td>
-      </tr>
-    </tbody>
-  </table>
-</section>
+# Publish a build directory
+vite build --base=./
+drop-dir --id my-app dist/</code></pre>
+  </section>
+</div>
 
-<wa-details summary="Inspect KaTeX Equation &amp; Details Disclosure">
-  <p>Block math renders without touching single-dollar variables like <code>$PATH</code> or prices like $29:</p>
+<h2>Publishing Modes</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Mode</th>
+      <th>Command</th>
+      <th>Output URL</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>HTML Fragment</td>
+      <td><code>drop-html --title "..." &lt; frag.html</code></td>
+      <td><code>http://bluyeti-pi.local/&lt;id&gt;.html</code></td>
+    </tr>
+    <tr>
+      <td>Standalone HTML</td>
+      <td><code>drop-html --raw app.html</code></td>
+      <td><code>http://bluyeti-pi.local/&lt;id&gt;.html</code></td>
+    </tr>
+    <tr>
+      <td>Build Output</td>
+      <td><code>drop-dir dist/</code></td>
+      <td><code>http://bluyeti-pi.local/&lt;id&gt;/</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<details>
+  <summary>Speedup Law (KaTeX block math)</summary>
+  <p class="muted text-sm">Double-dollar blocks render cleanly while single-dollar text like $29 is untouched:</p>
   $$
-  \text{Speedup} = \frac{1}{(1 - p) + \frac{p}{s}}
+  S_{\text{latency}}(s) = \frac{1}{(1 - p) + \frac{p}{s}}
   $$
-</wa-details>
+</details>
 
 <script>
   new Chart(document.getElementById("tokenChart"), {
@@ -129,13 +135,13 @@ EOF</code></pre>
       datasets: [{
         label: "Approx. Boilerplate Tokens",
         data: [950, 620, 45],
-        backgroundColor: ["#64748b", "#818cf8", "#38bdf8"],
+        backgroundColor: ["#7f796d", "#9e5a08", "#1f5d8c"],
         borderRadius: 6
       }]
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: true } },
+      maintainAspectRatio: false,
       scales: { y: { beginAtZero: true } }
     }
   });

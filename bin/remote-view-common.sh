@@ -114,7 +114,7 @@ rv_run_check() {
 }
 
 rv_list_drops() {
-  rv_ssh "ls -lht --time-style='+%Y-%m-%d %H:%M' '$REMOTE_VIEW_REMOTE_DIR' | grep -E '(\.html|^d)' || echo '(no drops yet)'"
+  rv_ssh "ls -lht --time-style='+%Y-%m-%d %H:%M' '$REMOTE_VIEW_REMOTE_DIR' | grep -E '(\.html|^d)' | grep -v ' _assets\$' || echo '(no drops yet)'"
 }
 
 rv_remove_drop() {
@@ -131,6 +131,7 @@ rv_prune_drops() {
     find '$REMOTE_VIEW_REMOTE_DIR' -maxdepth 1 -type f -name '*.html' ! -name 'index.html' -mtime +'$days' -print -delete
     for d in '$REMOTE_VIEW_REMOTE_DIR'/*/; do
       [ -d \"\$d\" ] || continue
+      case \"\$(basename \"\$d\")\" in _*) continue ;; esac
       if [ -z \"\$(find \"\$d\" -mtime -'$days' -print -quit)\" ]; then
         printf '%s\n' \"\$d\"
         rm -rf -- \"\$d\"

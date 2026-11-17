@@ -32,7 +32,10 @@ When coding agents generate HTML explanations, charts, diagrams, or static build
 | [bin/drop-html](bin/drop-html) | Publishes HTML fragments (wrapped in `base.html`) or standalone `--raw` HTML files |
 | [bin/drop-dir](bin/drop-dir) | Publishes static build output directories (`dist/`, `build/`, `out/`) via `tar` over SSH |
 | [bin/remote-view-common.sh](bin/remote-view-common.sh) | Shared config, validation, SSH, `--list`, `--rm`, `--prune`, and `--check` helpers |
-| [template/base.html](template/base.html) | Pre-styled dark/light shell with Web Awesome 3, Tailwind v4, Highlight.js, Chart.js, Mermaid v12, and KaTeX |
+| [template/base.html](template/base.html) | Minimal paper-inspired HTML shell (`{{RV_CSS_TAG}}` / `{{RV_JS_TAG}}`) |
+| [assets/rv.css](assets/rv.css) | Self-owned zero-build design system (warm paper light/dark palettes, sidebar + burger drawer, cards, stats, tabs, menus) |
+| [assets/rv.js](assets/rv.js) | Vanilla JS controller with 54 bundled Tabler icons, theme toggle, drawer, tabs, menus, copy-code, and table wrappers |
+| [assets/fonts](assets/fonts) | Self-hosted WOFF2 fonts (`Fraunces 800`, `IBM Plex Sans 400/600`, `JetBrains Mono 400`) |
 | [pi/setup-pi.sh](pi/setup-pi.sh) | Idempotent Pi setup: installs `lighttpd`, `avahi-daemon`, `cloudflared`, config, and cleanup cron |
 | [pi/setup-cloudflared.sh](pi/setup-cloudflared.sh) | Configures a persistent named Cloudflare Tunnel (`view.<domain>` and optional `ssh.<domain>`) |
 | [pi/quick-tunnel.sh](pi/quick-tunnel.sh) | Starts an ephemeral `trycloudflare.com` tunnel to the Pi's drop server |
@@ -207,16 +210,15 @@ drop-html --prune 14
 
 ---
 
-## 6. Pre-Loaded Fragment Stack
+## 6. Local Paper UI Kit & Component Stack
 
-[template/base.html](template/base.html) configures CSS `@layer` precedence and slotted `--spacing` isolation so Tailwind Preflight and Web Awesome compose cleanly:
+Instead of third-party CSS frameworks or icon CDNs, `remote-view` ships its own lightweight, zero-build UI kit in [assets/rv.css](assets/rv.css) and [assets/rv.js](assets/rv.js) (automatically content-hashed and synced to `/var/www/drops/_assets/` on the Pi, or inlined when using `--local`):
 
-- **Web Awesome 3 (`@awesome.me/webawesome@3.14.0`):** `<wa-card>`, `<wa-tab-group>`, `<wa-callout>`, `<wa-details>`, `<wa-badge>`, `<wa-progress-bar>`, `<wa-icon>` (Font Awesome icons built in).
-- **Tailwind CSS v4 Play CDN (`@tailwindcss/browser@4`):** Grid, flex, spacing, and responsive utilities.
-- **Highlight.js (`11.12.0`):** Auto-highlights `<pre><code>` blocks and adds a pinned **Copy** button (`tokyo-night-dark` / `github` synced to Dark/Light toggle).
-- **Chart.js (`4.6.1`):** Global `Chart` pre-themed for dark and light surfaces.
-- **Mermaid (`12.3.0`):** Renders `<pre class="mermaid">` blocks and re-renders automatically when switching Dark/Light mode.
-- **KaTeX (`0.19.1`):** Renders `$$...$$`, `\[...\]`, and `\(...\)` math without altering single-dollar `$VAR` or `$100` strings.
+- **Warm Paper Light & Dark Modes:** Archival ivory light mode (`#f7f4ec`) and warm charcoal dark mode (`#151412`), paired with bold **Fraunces** display headings, **IBM Plex Sans** body copy, and **JetBrains Mono** code—served from local WOFF2 files in [assets/fonts](assets/fonts).
+- **Classless Semantic Base:** Headings, paragraphs, lists, blockquotes, `<details>`, `<table>`, and `<pre><code>` look crisp with zero classes—avoiding card/component pollution when plain prose works best.
+- **Built-in Components:** Optional `.rv-sidebar` (sticky on desktop, auto-collapses into a topbar burger drawer on mobile), `.card`, `.stat`, `.badge`, `.callout`, `[data-tabs]`, `.rv-menu[popover]`, `.steps`, and `.grid-2` / `.grid-3` / `.grid-4`.
+- **Tabler Icons:** 54 curated [Tabler Icons](https://github.com/tabler/tabler-icons) bundled locally inside `rv.js` (`<i data-icon="bolt"></i>`) with automatic fallback for any other Tabler icon name.
+- **Code, Charts, Diagrams, Math:** Highlight.js (`11.12.0`, theme-synced + Copy button), Chart.js (`4.6.1`), Mermaid (`12.3.0`), and KaTeX (`0.19.1` scoped to `$$`, `\[`, `\(`).
 
 ---
 
