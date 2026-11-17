@@ -106,7 +106,7 @@ flowchart LR
 </ol>
 
 <details>
-  <summary>Show raw output</summary>
+  <summary>Show raw output (open by default; add data-closed to start collapsed)</summary>
   <pre><code class="language-json">{ "status": "ok" }</code></pre>
 </details>
 

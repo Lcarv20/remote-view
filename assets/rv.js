@@ -366,14 +366,31 @@ function initMenus() {
    Code Blocks, Tables, KaTeX, Mermaid
    -------------------------------------------------------------------------- */
 
-function initCodeBlocks() {
+const hljsLangLoads = new Map();
+
+function ensureHljsLanguage(lang) {
+  if (!window.hljs || !lang || window.hljs.getLanguage(lang)) {
+    return Promise.resolve(true);
+  }
+  if (!/^[a-z0-9_-]+$/i.test(lang)) return Promise.resolve(false);
+  if (hljsLangLoads.has(lang)) return hljsLangLoads.get(lang);
+
+  const p = new Promise((resolve) => {
+    const s = document.createElement("script");
+    s.src = `https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/languages/${encodeURIComponent(lang)}.min.js`;
+    s.onload = () => resolve(Boolean(window.hljs?.getLanguage(lang)));
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+  hljsLangLoads.set(lang, p);
+  return p;
+}
+
+async function initCodeBlocks() {
+  const jobs = [];
   for (const codeEl of document.querySelectorAll("pre > code")) {
     const pre = codeEl.parentElement;
     if (!pre || pre.classList.contains("mermaid")) continue;
-
-    if (window.hljs && !codeEl.classList.contains("hljs")) {
-      window.hljs.highlightElement(codeEl);
-    }
 
     if (!pre.hasAttribute("tabindex")) pre.setAttribute("tabindex", "0");
     if (!pre.hasAttribute("role")) pre.setAttribute("role", "region");
@@ -381,22 +398,20 @@ function initCodeBlocks() {
       pre.setAttribute("aria-label", "Code block");
     }
 
+    const langMatch = Array.from(codeEl.classList).find((c) => c.startsWith("language-"));
+    const langName = langMatch ? langMatch.replace(/^language-/, "") : "";
+
     if (!pre.parentElement?.classList.contains("rv-code-wrap")) {
       const wrap = document.createElement("div");
       wrap.className = "rv-code-wrap";
       pre.parentNode.insertBefore(wrap, pre);
-      wrap.appendChild(pre);
 
-      const actions = document.createElement("div");
-      actions.className = "rv-code-actions";
+      const bar = document.createElement("div");
+      bar.className = "rv-code-bar";
 
-      const langMatch = Array.from(codeEl.classList).find((c) => c.startsWith("language-"));
-      if (langMatch) {
-        const lang = document.createElement("span");
-        lang.className = "rv-code-lang";
-        lang.textContent = langMatch.replace(/^language-/, "");
-        actions.appendChild(lang);
-      }
+      const langSpan = document.createElement("span");
+      langSpan.className = "rv-code-lang";
+      langSpan.textContent = langName || "code";
 
       const copyBtn = document.createElement("button");
       copyBtn.type = "button";
@@ -407,10 +422,20 @@ function initCodeBlocks() {
         copyBtn.textContent = ok ? "Copied" : "Failed";
         setTimeout(() => { copyBtn.textContent = "Copy"; }, 1400);
       });
-      actions.appendChild(copyBtn);
-      wrap.appendChild(actions);
+
+      bar.append(langSpan, copyBtn);
+      wrap.append(bar, pre);
+    }
+
+    if (window.hljs && !codeEl.classList.contains("hljs")) {
+      jobs.push(
+        ensureHljsLanguage(langName).then(() => {
+          window.hljs.highlightElement(codeEl);
+        })
+      );
     }
   }
+  await Promise.all(jobs);
 }
 
 function initTables() {
@@ -423,6 +448,13 @@ function initTables() {
     wrap.setAttribute("aria-label", table.querySelector("caption")?.textContent?.trim() || "Data table");
     table.parentNode.insertBefore(wrap, table);
     wrap.appendChild(table);
+  }
+}
+
+function initDetails() {
+  for (const d of document.querySelectorAll("#rv-main details")) {
+    if (d.hasAttribute("data-closed") || d.hasAttribute("name")) continue;
+    d.open = true;
   }
 }
 
@@ -444,13 +476,13 @@ function initMath() {
    Boot
    -------------------------------------------------------------------------- */
 
-initCodeBlocks();
+initDetails();
 initTables();
 initTabs();
 initMenus();
 initSidebarDrawer();
 initMath();
-await hydrateIcons(document);
+await Promise.all([initCodeBlocks(), hydrateIcons(document), document.fonts?.ready]);
 
 const initialMode = root.dataset.themeMode || "auto";
 const initialResolved = resolveTheme(initialMode);

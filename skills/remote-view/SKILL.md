@@ -22,7 +22,14 @@ REMOTE_VIEW_EOF
 
 - Pass only the inner body HTML (`<!DOCTYPE>`, `<html>`, `<head>`, and CDN imports are already in `base.html`).
 - Use a distinct quoted heredoc delimiter (e.g. `<<'REMOTE_VIEW_EOF'`) if your fragment contains `EOF` or `$`.
-- **Keep layouts clean and restrained:** The UI components below are optional tools, not a checklist—use only what clarifies the content. Prefer plain headings, prose, lists, and tables over wrapping every section in `.card` boxes (avoid card pollution).
+
+### Keeping Pages Brief, Visual & Uncluttered
+
+When presenting ideas, plans, comparisons, or explanations:
+- **Prefer visual structure over walls of text:** Lead with a tight comparison table, short scannable bullets (1 line each), or a simple diagram/chart rather than dense paragraphs.
+- **Avoid card & box pollution:** Components (`.card`, `.stat`, `<details>`, `.callout`) are optional. Plain headings, prose, lists, and tables usually read cleaner than wrapping every point in a bordered box.
+- **Keep Mermaid diagrams short:** Use 2–4 words per node (max 2 short lines) so nodes stay compact and scannable. Avoid `<T>` inside node labels (use `Prop(T)` or `Prop[T]`—Mermaid parses `<T>` as an HTML tag).
+- **Trim code snippets:** Show only the 5–15 lines that highlight the key idea instead of full files.
 
 ### Available Local Stack & Primitives
 

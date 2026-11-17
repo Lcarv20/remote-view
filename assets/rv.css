@@ -233,7 +233,7 @@ summary:focus-visible,
 }
 
 .rv-main > * + * {
-  margin-top: 1.25rem;
+  margin-top: 1.45rem;
 }
 
 @media (min-width: 960px) {
@@ -428,7 +428,7 @@ h1 {
 h2 {
   font-size: clamp(1.35rem, 2.4vw, 1.75rem);
   line-height: 1.22;
-  margin-top: 2rem;
+  margin-top: 2.35rem;
 }
 
 h3 {
@@ -477,6 +477,13 @@ li + li {
   border-radius: var(--rv-radius-sm);
   background: var(--rv-bg-subtle);
   border: 1px solid var(--rv-border);
+}
+
+h1 code,
+h2 code {
+  font-size: 0.76em;
+  padding: 0.06em 0.3em;
+  vertical-align: 0.05em;
 }
 
 kbd {
@@ -874,11 +881,14 @@ label {
 /* Native Details / Accordion */
 
 details {
-  background: var(--rv-bg-elevated);
-  border: 1px solid var(--rv-border);
-  border-radius: var(--rv-radius-md);
-  padding: 0.8rem 1rem;
-  box-shadow: var(--rv-shadow-sm);
+  border-top: 1px solid var(--rv-border);
+  border-bottom: 1px solid var(--rv-border);
+  padding: 0.75rem 0.25rem;
+}
+
+details + details {
+  margin-top: 0 !important;
+  border-top: 0;
 }
 
 details > summary {
@@ -1040,16 +1050,25 @@ details[open] > summary {
 /* Code Blocks */
 
 .rv-code-wrap {
-  position: relative;
   border: 1px solid var(--rv-border);
   border-radius: var(--rv-radius-md);
   background: var(--rv-code-bg);
   overflow: hidden;
 }
 
+.rv-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.38rem 0.75rem;
+  border-bottom: 1px solid var(--rv-border);
+  background: color-mix(in srgb, var(--rv-bg-subtle) 75%, transparent);
+}
+
 .rv-code-wrap pre {
   margin: 0;
-  padding: 1rem 5rem 1rem 1.15rem;
+  padding: 0.9rem 1.1rem;
   overflow-x: auto;
   font-family: var(--rv-font-mono);
   font-size: 0.855rem;
@@ -1063,22 +1082,13 @@ details[open] > summary {
   font-family: inherit;
 }
 
-.rv-code-actions {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  z-index: 2;
-}
-
 .rv-code-lang {
   font-family: var(--rv-font-mono);
   font-size: 0.68rem;
+  font-weight: 600;
   color: var(--rv-text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 
 .rv-copy-code {
@@ -1161,17 +1171,24 @@ pre.mermaid {
   background: var(--rv-bg-elevated);
   border: 1px solid var(--rv-border);
   border-radius: var(--rv-radius-md);
-  padding: 1.25rem;
-  display: flex;
-  justify-content: center;
+  padding: 1.15rem;
+  display: block;
+  text-align: center;
+  white-space: normal;
   overflow-x: auto;
   margin: 0;
   box-shadow: var(--rv-shadow-sm);
 }
 
 pre.mermaid svg {
-  max-width: 100%;
+  display: inline-block;
+  max-width: none;
   height: auto;
+}
+
+pre.mermaid .nodeLabel,
+pre.mermaid .nodeLabel p {
+  white-space: normal;
 }
 
 /* Icons */
