@@ -77,25 +77,38 @@
       if (Chart.defaults.scale?.grid) {
         Chart.defaults.scale.grid.color = gridColor;
       }
+      if (Chart.defaults.scale?.title) {
+        Chart.defaults.scale.title.color = mutedColor;
+      }
+
+      const rvThemeColors = new Set([
+        "#ece7dc",
+        "#1f1e1a",
+        "#aaa396",
+        "#5c584e",
+        "rgba(170, 163, 150, 0.14)",
+        "rgba(31, 30, 26, 0.10)"
+      ]);
+      const isManagedColor = (val) => !val || rvThemeColors.has(val);
 
       const instances = Chart.instances ? Object.values(Chart.instances) : [];
       for (const chart of instances) {
-        const userOpts = chart?.config?.options;
-        if (chart?.options && !userOpts?.color) {
+        if (chart?.options && isManagedColor(chart.options.color)) {
           chart.options.color = textColor;
         }
-        if (chart?.options?.plugins?.legend?.labels && !userOpts?.plugins?.legend?.labels?.color) {
-          chart.options.plugins.legend.labels.color = textColor;
+        const legendLabels = chart?.options?.plugins?.legend?.labels;
+        if (legendLabels && isManagedColor(legendLabels.color)) {
+          legendLabels.color = textColor;
         }
-        if (chart?.options?.plugins?.title && !userOpts?.plugins?.title?.color) {
-          chart.options.plugins.title.color = textColor;
+        const titleOpts = chart?.options?.plugins?.title;
+        if (titleOpts && isManagedColor(titleOpts.color)) {
+          titleOpts.color = textColor;
         }
         if (chart?.options?.scales) {
-          for (const [axisKey, axis] of Object.entries(chart.options.scales)) {
-            const userAxis = userOpts?.scales?.[axisKey];
-            if (axis.ticks && !userAxis?.ticks?.color) axis.ticks.color = mutedColor;
-            if (axis.grid && !userAxis?.grid?.color) axis.grid.color = gridColor;
-            if (axis.title && !userAxis?.title?.color) axis.title.color = mutedColor;
+          for (const axis of Object.values(chart.options.scales)) {
+            if (axis.ticks && isManagedColor(axis.ticks.color)) axis.ticks.color = mutedColor;
+            if (axis.grid && isManagedColor(axis.grid.color)) axis.grid.color = gridColor;
+            if (axis.title && isManagedColor(axis.title.color)) axis.title.color = mutedColor;
           }
         }
         chart.update("none");
