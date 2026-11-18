@@ -35,6 +35,8 @@ Clone the repo and run:
 
 ```bash
 ./install.sh
+# or for a non-default Pi hostname/user:
+./install.sh --host pi@my-pi.local --url http://my-pi.local
 ```
 
 This symlinks `drop-html`, `drop-dir`, and `tunel-view` into `~/.local/bin`, installs the [remote-view skill](skills/remote-view/SKILL.md) and [tunel-view skill](skills/tunel-view/SKILL.md) for Antigravity (`~/.gemini/config/skills/`) and OpenCode (`~/.agents/skills/`), and checks SSH/HTTP connectivity to the Pi.
@@ -60,6 +62,8 @@ Verify connectivity anytime with `drop-html --check`. In prompts, tell the agent
 # Tunnel the Pi remote-view server (12h default TTL)
 TUNNEL_URL="$(tunel-view up)"
 drop-html --id preview --url "$TUNNEL_URL" --title "Preview" <<< '<h1>Hello</h1>'
+# or use --tunnel to read the active Pi tunnel URL automatically:
+drop-html --id preview --tunnel --title "Preview" <<< '<h1>Hello</h1>'
 
 # Or serve a local HTML file / folder + tunnel it (12h TTL; edit the file in place)
 tunel-view up --serve /tmp/preview.html
@@ -97,7 +101,7 @@ Host pi-ssh.yourdomain.com
   ProxyCommand cloudflared access ssh --hostname %h
 ```
 
-Put `view.yourdomain.com` behind Cloudflare Zero Trust Access (or use `REMOTE_VIEW_NO_LISTING=1`) if you don't want drops publicly listable.
+Put `view.yourdomain.com` behind Cloudflare Zero Trust Access (or use `REMOTE_VIEW_NO_LISTING=1`) if you don't want drops publicly listable. `REMOTE_VIEW_NO_LISTING=1` is also recommended when exposing the Pi via `tunel-view up` or `quick-tunnel.sh`.
 
 ## Usage
 
@@ -153,6 +157,9 @@ REMOTE_VIEW_SSH_HOST="lcarv@bluyeti-pi.local"
 REMOTE_VIEW_PUBLIC_URL="http://bluyeti-pi.local"
 REMOTE_VIEW_REMOTE_DIR="/var/www/drops"
 REMOTE_VIEW_THEME="auto"   # auto | dark | light
+REMOTE_VIEW_PORT="80"      # HTTP port on the Pi
+REMOTE_VIEW_SSH_BATCH="1"  # 1 = BatchMode=yes (fail fast instead of prompting)
+REMOTE_VIEW_TEMPLATE=""    # optional custom base.html path
 ```
 
 ## Template & UI assets
@@ -161,7 +168,7 @@ Fragments are wrapped in [template/base.html](template/base.html) using [assets/
 
 - Light and dark themes with self-hosted fonts (`Fraunces`, `IBM Plex Sans`, `JetBrains Mono` in [assets/fonts](assets/fonts))
 - Plain semantic HTML styling plus optional helpers (`.rv-sidebar`, `.card`, `.stat`, `.badge`, `.callout`, `[data-tabs]`, `.rv-menu[popover]`, `.steps`, `.grid-2`/`3`/`4`)
-- 54 bundled Tabler icons (`<i data-icon="bolt"></i>`)
+- 55 bundled Tabler icons (`<i data-icon="bolt"></i>`)
 - Built-in Highlight.js, Chart.js, Mermaid, and KaTeX (`$$`, `\[`, `\(`) — see [examples/showcase.html](examples/showcase.html) and [skills/remote-view/references/components.md](skills/remote-view/references/components.md)
 
 ## Repo layout

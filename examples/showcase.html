@@ -25,7 +25,7 @@
   <i class="callout-icon" data-icon="info-circle"></i>
   <div class="callout-body">
     <strong>Self-hosted assets:</strong> CSS, JS, fonts (<code>Fraunces</code>, <code>IBM Plex Sans</code>,
-    <code>JetBrains Mono</code>), and 54 Tabler icons live locally under <code>/_assets/</code>.
+    <code>JetBrains Mono</code>), and 55 Tabler icons live locally under <code>/_assets/</code>.
   </div>
 </aside>
 
@@ -128,21 +128,23 @@ drop-dir --id my-app dist/</code></pre>
 </details>
 
 <script>
-  new Chart(document.getElementById("tokenChart"), {
-    type: "bar",
-    data: {
-      labels: ["Raw Standalone HTML", "Tailwind + Inline CSS", "remote-view Fragment"],
-      datasets: [{
-        label: "Approx. Boilerplate Tokens",
-        data: [950, 620, 45],
-        backgroundColor: ["#7f796d", "#9e5a08", "#1f5d8c"],
-        borderRadius: 6
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: { y: { beginAtZero: true } }
-    }
-  });
+  if (window.Chart) {
+    new Chart(document.getElementById("tokenChart"), {
+      type: "bar",
+      data: {
+        labels: ["Raw Standalone HTML", "Tailwind + Inline CSS", "remote-view Fragment"],
+        datasets: [{
+          label: "Approx. Boilerplate Tokens",
+          data: [950, 620, 45],
+          backgroundColor: ["#7f796d", "#9e5a08", "#1f5d8c"],
+          borderRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
 </script>

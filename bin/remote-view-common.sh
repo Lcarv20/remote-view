@@ -60,6 +60,43 @@ rv_validate_slug() {
   printf '%s' "$slug"
 }
 
+rv_validate_url() {
+  local url="$1"
+  if [[ -z "$url" || ! "$url" =~ ^https?://[^[:space:]]+$ ]]; then
+    rv_die "invalid public URL '${url}' (must be non-empty and start with http:// or https://)"
+  fi
+}
+
+rv_resolve_tunnel_url() {
+  local ref_file="${XDG_CACHE_HOME:-$HOME/.cache}/remote-view/tunel-view-pi.ref"
+  [[ -r "$ref_file" ]] || rv_die "no active Pi tunnel found (${ref_file} missing; run 'tunel-view up' first)"
+
+  local url="" expires_epoch="" line k v
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* ]] || continue
+    k="${line%%=*}"
+    v="${line#*=}"
+    case "$k" in
+      URL) url="$v" ;;
+      EXPIRES_EPOCH) expires_epoch="$v" ;;
+    esac
+  done < "$ref_file"
+
+  [[ -n "$url" ]] || rv_die "Pi tunnel ref (${ref_file}) has no URL; run 'tunel-view up' first"
+
+  if [[ -n "$expires_epoch" && "$expires_epoch" != "0" ]]; then
+    [[ "$expires_epoch" =~ ^[0-9]+$ ]] || rv_die "invalid EXPIRES_EPOCH '${expires_epoch}' in ${ref_file}"
+    local now
+    now="$(date +%s)"
+    if (( expires_epoch <= now )); then
+      rv_die "Pi tunnel has expired (${url}); run 'tunel-view up' to start a new one"
+    fi
+  fi
+
+  rv_validate_url "$url"
+  printf '%s' "$url"
+}
+
 rv_ssh() {
   local opts=(-o ConnectTimeout=5)
   if [[ "$REMOTE_VIEW_SSH_BATCH" == "1" ]]; then
@@ -71,7 +108,12 @@ rv_ssh() {
 rv_run_check() {
   local ok=0
   local hostname_only="${REMOTE_VIEW_SSH_HOST#*@}"
+  local resolved_host=""
+  resolved_host="$(ssh -G "$REMOTE_VIEW_SSH_HOST" 2>/dev/null | awk '/^hostname /{print $2; exit}' || true)"
+  [[ -n "$resolved_host" ]] || resolved_host="$hostname_only"
   local public_base="${REMOTE_VIEW_PUBLIC_URL%/}"
+  local q_dir
+  printf -v q_dir '%q' "$REMOTE_VIEW_REMOTE_DIR"
 
   echo "Checking remote-view configuration..."
   echo "  SSH target : $REMOTE_VIEW_SSH_HOST"
@@ -86,13 +128,17 @@ rv_run_check() {
     ok=1
   fi
 
-  if getent hosts "$hostname_only" >/dev/null 2>&1; then
-    echo "[ok] Host resolves: $(getent hosts "$hostname_only" | head -n 1)"
+  if getent hosts "$resolved_host" >/dev/null 2>&1; then
+    if [[ "$resolved_host" != "$hostname_only" ]]; then
+      echo "[ok] Host resolves (${hostname_only} -> ${resolved_host}): $(getent hosts "$resolved_host" | head -n 1)"
+    else
+      echo "[ok] Host resolves: $(getent hosts "$resolved_host" | head -n 1)"
+    fi
   else
-    echo "[warn] Could not resolve '$hostname_only' via getent hosts"
+    echo "[warn] Could not resolve '$resolved_host' via getent hosts (continuing to SSH check)"
   fi
 
-  if rv_ssh "test -d '$REMOTE_VIEW_REMOTE_DIR' && test -w '$REMOTE_VIEW_REMOTE_DIR'" 2>/dev/null; then
+  if rv_ssh "test -d $q_dir && test -w $q_dir" 2>/dev/null; then
     echo "[ok] Non-interactive SSH works and '$REMOTE_VIEW_REMOTE_DIR' is writable"
   else
     echo "[fail] SSH check failed for $REMOTE_VIEW_SSH_HOST ($REMOTE_VIEW_REMOTE_DIR)" >&2
@@ -101,7 +147,10 @@ rv_run_check() {
     ok=1
   fi
 
-  if command -v curl >/dev/null 2>&1; then
+  if [[ -z "$public_base" || ! "$public_base" =~ ^https?://[^[:space:]]+$ ]]; then
+    echo "[fail] Invalid public URL '$public_base' (must start with http:// or https://)" >&2
+    ok=1
+  elif command -v curl >/dev/null 2>&1; then
     local http_code
     http_code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 "$public_base/" || true)"
     if [[ "$http_code" =~ ^(200|301|302|403|404)$ ]]; then
@@ -116,28 +165,44 @@ rv_run_check() {
 }
 
 rv_list_drops() {
-  rv_ssh "ls -lht --time-style='+%Y-%m-%d %H:%M' '$REMOTE_VIEW_REMOTE_DIR' | grep -E '(\.html|^d)' | grep -v ' _assets\$' || echo '(no drops yet)'"
+  local q_dir
+  printf -v q_dir '%q' "$REMOTE_VIEW_REMOTE_DIR"
+  rv_ssh "ls -lht --time-style='+%Y-%m-%d %H:%M' $q_dir | awk '/^d/ || /\.html\$/ { name=\$NF; if (name !~ /^(_|\.)/) { print; count++ } } END { if (!count) print \"(no drops yet)\" }'"
 }
 
 rv_remove_drop() {
-  local slug
+  local slug q_dir_target q_file_target
   slug="$(rv_validate_slug "$1")"
-  rv_ssh "rm -rf -- '$REMOTE_VIEW_REMOTE_DIR/${slug}' '$REMOTE_VIEW_REMOTE_DIR/${slug}.html'"
+  printf -v q_dir_target '%q' "$REMOTE_VIEW_REMOTE_DIR/${slug}"
+  printf -v q_file_target '%q' "$REMOTE_VIEW_REMOTE_DIR/${slug}.html"
+  rv_ssh "rm -rf -- $q_dir_target $q_file_target"
   echo "Removed ${slug} (${slug}.html / ${slug}/) from ${REMOTE_VIEW_REMOTE_DIR}"
 }
 
 rv_prune_drops() {
-  local days="$1"
+  local days="$1" q_dir q_days
   [[ "$days" =~ ^[0-9]+$ ]] || rv_die "--prune requires a non-negative integer number of days"
+  printf -v q_dir '%q' "$REMOTE_VIEW_REMOTE_DIR"
+  printf -v q_days '%q' "$days"
   rv_ssh "
-    find '$REMOTE_VIEW_REMOTE_DIR' -maxdepth 1 -type f -name '*.html' ! -name 'index.html' -mtime +'$days' -print -delete
-    for d in '$REMOTE_VIEW_REMOTE_DIR'/*/; do
-      [ -d \"\$d\" ] || continue
-      case \"\$(basename \"\$d\")\" in _*) continue ;; esac
-      if [ -z \"\$(find \"\$d\" -mtime -'$days' -print -quit)\" ]; then
+    if [ $q_days -eq 0 ]; then
+      find $q_dir -maxdepth 1 -type f -name '*.html' ! -name 'index.html' -print -delete
+      for d in $q_dir/*/; do
+        [ -d \"\$d\" ] || continue
+        case \"\$(basename \"\$d\")\" in _*) continue ;; esac
         printf '%s\n' \"\$d\"
         rm -rf -- \"\$d\"
-      fi
-    done
+      done
+    else
+      find $q_dir -maxdepth 1 -type f -name '*.html' ! -name 'index.html' -mtime +$q_days -print -delete
+      for d in $q_dir/*/; do
+        [ -d \"\$d\" ] || continue
+        case \"\$(basename \"\$d\")\" in _*) continue ;; esac
+        if [ -z \"\$(find \"\$d\" -mtime -$q_days -print -quit)\" ]; then
+          printf '%s\n' \"\$d\"
+          rm -rf -- \"\$d\"
+        fi
+      done
+    fi
   "
 }

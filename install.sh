@@ -191,12 +191,11 @@ print_pi_provision_help() {
   echo "  ssh -t ${SSH_HOST} \"cd ~/remote-view-pi && ./setup-pi.sh\""
 }
 
-if ! getent hosts "$HOST_ONLY" >/dev/null 2>&1; then
-  echo "[warn] Could not resolve '${HOST_ONLY}' on this network."
-  echo "       - On your home LAN, ensure the Pi is powered on and avahi-daemon is running."
-  echo "       - Or specify an IP / tunnel host:  ./install.sh --host lcarv@<pi-ip> --url http://<pi-ip>"
-  print_ssh_help
-  exit 0
+RESOLVED_HOST="$(ssh -G "$SSH_HOST" 2>/dev/null | awk '/^hostname /{print $2; exit}' || true)"
+[[ -n "$RESOLVED_HOST" ]] || RESOLVED_HOST="$HOST_ONLY"
+
+if ! getent hosts "$RESOLVED_HOST" >/dev/null 2>&1; then
+  echo "[warn] Could not resolve '${RESOLVED_HOST}' via getent hosts (continuing to SSH check — SSH config aliases/ProxyCommand may still work)."
 fi
 
 if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_HOST" true 2>/dev/null; then

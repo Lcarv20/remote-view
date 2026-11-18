@@ -249,6 +249,7 @@ summary:focus-visible,
 }
 
 @media (max-width: 520px) {
+
   #rv-copy-url-label,
   #rv-theme-label {
     position: absolute;
@@ -289,76 +290,69 @@ summary:focus-visible,
 
 /* Flow rhythm inside .rv-main and nested semantic containers (section, header, article, div, tabpanel, details) */
 
-:where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, figure, pre, hr, .steps) {
+:where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, figure, pre, hr, progress, .steps) {
   margin: 0;
 }
 
-:where(.rv-main) > :where(:not(.rv-sidebar, script, style, template, [hidden])) + :where(
-  h1, h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, hr, details,
+:where(.rv-main)> :where(:not(.rv-sidebar, script, style, template, [hidden]))+ :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, hr, details, progress,
   section, article, header, footer, aside, div,
   .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box,
-  .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4
-) {
+  .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
   margin-block-start: clamp(1.15rem, 2.2vw, 1.45rem);
 }
 
-:where(
-  .rv-main,
-  .rv-main :is(section, article, header, footer, aside, figure, figcaption, details, .callout-body, div):not(
-    .rv-sidebar, .rv-sidebar *,
+:where(.rv-main,
+  .rv-main :is(section, article, header, footer, aside, figure, figcaption, details, .callout-body, div):not(.rv-sidebar, .rv-sidebar *,
     .stack, .row, .cluster, .split, .grid-2, .grid-3, .grid-4,
     .card, .card > header, .card > footer, .stat, .callout, .tabs, [role="tablist"], .steps,
     .rv-code-wrap, .rv-code-wrap *, .rv-table-wrap, .rv-table-wrap *, .rv-menu, .rv-menu *, .chart-box, .chart-box *,
-    .mermaid, .mermaid *, .katex, .katex *, pre, pre *
-  )
-) {
-  & > :where(:not(.rv-sidebar, summary, script, style, template, [hidden])) + :where(
-    h1, h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, hr, details,
+    .mermaid, .mermaid *, .katex, .katex *, pre, pre *)) {
+
+  &> :where(:not(.rv-sidebar, summary, script, style, template, [hidden]))+ :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, hr, details, progress,
     section, article, header, footer, aside, div,
     .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box,
-    .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4
-  ) {
+    .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
     margin-block-start: clamp(0.85rem, 1.6vw, 1.05rem);
   }
 
-  & > :where(:not(.rv-sidebar, summary, script, style, template, [hidden])) + :where(h2) {
+  &> :where(:not(.rv-sidebar, summary, script, style, template, [hidden]))+ :where(h2) {
     margin-block-start: clamp(1.85rem, 3.2vw, 2.35rem);
   }
 
-  & > :where(:not(.rv-sidebar, summary, script, style, template, [hidden])) + :where(h3) {
+  &> :where(:not(.rv-sidebar, summary, script, style, template, [hidden]))+ :where(h3) {
     margin-block-start: clamp(1.35rem, 2.2vw, 1.65rem);
   }
 
-  & > :where(:not(.rv-sidebar, summary, script, style, template, [hidden])) + :where(h4) {
+  &> :where(:not(.rv-sidebar, summary, script, style, template, [hidden]))+ :where(h4) {
     margin-block-start: 1.1rem;
   }
 
-  & > :where(h1) + :where(h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
+  &> :where(h1)+ :where(h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
     margin-block-start: 0.8rem;
   }
 
-  & > :where(h2) + :where(h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
+  &> :where(h2)+ :where(h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
     margin-block-start: 0.82rem;
   }
 
-  & > :where(h3) + :where(h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
+  &> :where(h3)+ :where(h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
     margin-block-start: 0.55rem;
   }
 
-  & > :where(h4) + :where(p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
+  &> :where(h4)+ :where(p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
     margin-block-start: 0.45rem;
   }
 
-  & > :where(p) + :where(p) {
+  &> :where(p)+ :where(p) {
     margin-block-start: 0.85rem;
   }
 
-  & > :where(p, ul, ol, blockquote) + :where(.rv-code-wrap, pre, .rv-table-wrap, .tabs, .chart-box, figure, details) {
+  &> :where(p, ul, ol, blockquote)+ :where(.rv-code-wrap, pre, .rv-table-wrap, .tabs, .chart-box, figure, details) {
     margin-block-start: 1rem;
   }
 
-  & > :where(:not(.rv-sidebar, summary, script, style, template, [hidden])) + :where(hr),
-  & > :where(hr) + :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, header, footer, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
+  &> :where(:not(.rv-sidebar, summary, script, style, template, [hidden]))+ :where(hr),
+  &> :where(hr)+ :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, pre, table, figure, details, section, article, header, footer, aside, div, .rv-code-wrap, .rv-table-wrap, .tabs, .callout, .card, .stat, .chart-box, .steps, .row, .cluster, .split, .stack, .grid-2, .grid-3, .grid-4) {
     margin-block-start: clamp(1.5rem, 3vw, 2rem);
   }
 }
@@ -372,28 +366,22 @@ summary:focus-visible,
 }
 
 @media (min-width: 960px) {
-  .rv-shell:has(.rv-sidebar) {
+  .rv-shell:has(> .rv-sidebar) {
     display: grid;
     grid-template-columns: 15.25rem minmax(0, 1fr);
     column-gap: 2.25rem;
-    row-gap: 0;
     align-items: start;
   }
 
-  .rv-shell:has(.rv-sidebar) .rv-main {
+  .rv-shell:has(> .rv-sidebar)>.rv-sidebar {
+    grid-column: 1;
+  }
+
+  .rv-shell:has(> .rv-sidebar)>.rv-main {
+    grid-column: 2;
     max-width: none;
     margin: 0;
-    display: contents;
-  }
-
-  .rv-shell:has(.rv-sidebar) .rv-main > * {
-    grid-column: 2;
     min-inline-size: 0;
-  }
-
-  .rv-shell:has(.rv-sidebar) .rv-main > .rv-sidebar {
-    grid-column: 1;
-    grid-row: 1 / span 200;
   }
 }
 
@@ -432,7 +420,7 @@ summary:focus-visible,
   margin: 0.85rem 0 0.35rem 0.5rem;
 }
 
-.rv-sidebar > :first-child {
+.rv-sidebar> :first-child {
   margin-top: 0;
 }
 
@@ -442,7 +430,7 @@ summary:focus-visible,
   padding: 0;
 }
 
-.rv-sidebar li + li {
+.rv-sidebar li+li {
   margin-top: 0.15rem;
 }
 
@@ -537,6 +525,7 @@ summary:focus-visible,
     opacity: 0;
     transform: translateX(-1rem);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -547,7 +536,8 @@ summary:focus-visible,
    Editorial Paper Typography & Semantic Elements
    ========================================================================== */
 
-h1, h2 {
+h1,
+h2 {
   font-family: var(--rv-font-display);
   font-weight: 800;
   color: var(--rv-text);
@@ -557,7 +547,8 @@ h1, h2 {
   overflow-wrap: break-word;
 }
 
-h3, h4 {
+h3,
+h4 {
   font-family: var(--rv-font-sans);
   font-weight: 600;
   color: var(--rv-text);
@@ -607,7 +598,8 @@ a {
   text-underline-offset: 0.22em;
 }
 
-ul, ol {
+ul,
+ol {
   padding-inline-start: 1.35rem;
   max-width: 72ch;
 }
@@ -616,15 +608,15 @@ li {
   min-inline-size: 0;
 }
 
-li + li {
+li+li {
   margin-block-start: 0.42rem;
 }
 
-li > :not(script, style, template, [hidden]) + :is(p, ul, ol, pre, .rv-code-wrap, .rv-table-wrap, blockquote) {
+li> :not(script, style, template, [hidden])+ :is(p, ul, ol, pre, .rv-code-wrap, .rv-table-wrap, blockquote) {
   margin-block-start: 0.6rem;
 }
 
-:not(pre) > code {
+:not(pre)>code {
   font-family: var(--rv-font-mono);
   font-size: 0.84em;
   padding: 0.1em 0.38em;
@@ -670,7 +662,9 @@ hr {
   border-top: 1px solid var(--rv-border);
 }
 
-img, svg, video {
+img,
+svg,
+video {
   max-width: 100%;
   height: auto;
 }
@@ -777,7 +771,7 @@ label {
   min-inline-size: 0;
 }
 
-.stack > :not(script, style, template, [hidden]) + h2 {
+.stack> :not(script, style, template, [hidden])+h2 {
   margin-block-start: 0.85rem;
 }
 
@@ -805,27 +799,36 @@ label {
   min-inline-size: 0;
 }
 
-.grid-2 > *,
-.grid-3 > *,
-.grid-4 > *,
-.stack > *,
-.tabs > *,
-.card > *,
-.stat > * {
+.grid-2>*,
+.grid-3>*,
+.grid-4>*,
+.stack>*,
+.tabs>*,
+.card>*,
+.stat>* {
   min-inline-size: 0;
 }
 
-.row > :not(button, .btn, .badge, a),
-.cluster > :not(button, .btn, .badge, a),
-.split > :not(button, .btn, .badge, a) {
+.row> :not(button, .btn, .badge, a),
+.cluster> :not(button, .btn, .badge, a),
+.split> :not(button, .btn, .badge, a) {
   min-inline-size: 0;
 }
 
-.grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
 
 @media (max-width: 900px) {
+
   .grid-4,
   .grid-3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -833,6 +836,7 @@ label {
 }
 
 @media (max-width: 640px) {
+
   .grid-4,
   .grid-3,
   .grid-2 {
@@ -845,15 +849,37 @@ label {
   }
 }
 
-.gap-sm { gap: 0.5rem; }
-.gap-md { gap: 1rem; }
-.gap-lg { gap: 1.5rem; }
+.gap-sm {
+  gap: 0.5rem;
+}
 
-.muted { color: var(--rv-text-muted); }
-.faint { color: var(--rv-text-faint); }
-.mono { font-family: var(--rv-font-mono); }
-.text-sm { font-size: 0.875rem; }
-.text-xs { font-size: 0.78rem; }
+.gap-md {
+  gap: 1rem;
+}
+
+.gap-lg {
+  gap: 1.5rem;
+}
+
+.muted {
+  color: var(--rv-text-muted);
+}
+
+.faint {
+  color: var(--rv-text-faint);
+}
+
+.mono {
+  font-family: var(--rv-font-mono);
+}
+
+.text-sm {
+  font-size: 0.875rem;
+}
+
+.text-xs {
+  font-size: 0.78rem;
+}
 
 /* ==========================================================================
    Components: Cards, Stats, Badges, Callouts, Tabs, Details, Menus, Steps
@@ -876,7 +902,7 @@ label {
   border-color: color-mix(in srgb, var(--rv-accent) 45%, var(--rv-border));
 }
 
-.card > header {
+.card>header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -887,7 +913,7 @@ label {
   font-weight: 600;
 }
 
-.card > footer {
+.card>footer {
   padding-top: 0.7rem;
   border-top: 1px solid var(--rv-border);
   font-size: 0.85rem;
@@ -1023,9 +1049,17 @@ label {
   color: var(--rv-accent);
 }
 
-.callout.success .callout-icon { color: var(--rv-success); }
-.callout.warning .callout-icon { color: var(--rv-warning); }
-.callout.danger .callout-icon { color: var(--rv-danger); }
+.callout.success .callout-icon {
+  color: var(--rv-success);
+}
+
+.callout.warning .callout-icon {
+  color: var(--rv-warning);
+}
+
+.callout.danger .callout-icon {
+  color: var(--rv-danger);
+}
 
 .callout-body {
   min-inline-size: 0;
@@ -1101,12 +1135,12 @@ details {
   min-inline-size: 0;
 }
 
-details + details {
+details+details {
   margin-block-start: 0;
   border-top: 0;
 }
 
-details > summary {
+details>summary {
   list-style: none;
   display: flex;
   align-items: center;
@@ -1117,11 +1151,11 @@ details > summary {
   font-size: 0.94rem;
 }
 
-details > summary::-webkit-details-marker {
+details>summary::-webkit-details-marker {
   display: none;
 }
 
-details > summary::before {
+details>summary::before {
   content: "";
   width: 0.45rem;
   height: 0.45rem;
@@ -1133,11 +1167,11 @@ details > summary::before {
   margin-right: 0.2rem;
 }
 
-details[open] > summary::before {
+details[open]>summary::before {
   transform: rotate(45deg);
 }
 
-details[open] > summary {
+details[open]>summary {
   margin-bottom: 0.75rem;
 }
 
@@ -1222,13 +1256,13 @@ details[open] > summary {
   max-width: 72ch;
 }
 
-.steps > li {
+.steps>li {
   position: relative;
   padding-inline-start: 2.25rem;
   margin: 0;
 }
 
-.steps > li::before {
+.steps>li::before {
   counter-increment: rv-step;
   content: counter(rv-step);
   position: absolute;
@@ -1257,9 +1291,37 @@ details[open] > summary {
   overflow: hidden;
 }
 
-.progress > span {
+.progress>span {
   display: block;
   height: 100%;
+  background: var(--rv-accent);
+  border-radius: var(--rv-radius-pill);
+}
+
+progress {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  height: 0.5rem;
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-bg-subtle);
+  border: 1px solid var(--rv-border);
+  overflow: hidden;
+  accent-color: var(--rv-accent);
+}
+
+progress::-webkit-progress-bar {
+  background: var(--rv-bg-subtle);
+  border-radius: var(--rv-radius-pill);
+}
+
+progress::-webkit-progress-value {
+  background: var(--rv-accent);
+  border-radius: var(--rv-radius-pill);
+}
+
+progress::-moz-progress-bar {
   background: var(--rv-accent);
   border-radius: var(--rv-radius-pill);
 }
@@ -1372,7 +1434,7 @@ details[open] > summary {
   background: color-mix(in srgb, var(--rv-bg-subtle) 75%, transparent);
 }
 
-.rv-table-wrap:is([data-overflow-x="true"], [data-view="cards"]) > .rv-table-bar {
+.rv-table-wrap:is([data-overflow-x="true"], [data-view="cards"])>.rv-table-bar {
   display: flex;
 }
 
@@ -1489,24 +1551,20 @@ details[open] > summary {
 
 .rv-table-viewport::before {
   inset-inline-start: var(--rv-sticky-col-w, 0px);
-  background: linear-gradient(
-    to var(--rv-shadow-dir-start),
-    light-dark(rgba(31, 30, 26, 0.07), rgba(0, 0, 0, 0.22)),
-    transparent
-  );
+  background: linear-gradient(to var(--rv-shadow-dir-start),
+      light-dark(rgba(31, 30, 26, 0.07), rgba(0, 0, 0, 0.22)),
+      transparent);
 }
 
 .rv-table-viewport::after {
   inset-inline-end: 0;
-  background: linear-gradient(
-    to var(--rv-shadow-dir-end),
-    light-dark(rgba(31, 30, 26, 0.07), rgba(0, 0, 0, 0.22)),
-    transparent
-  );
+  background: linear-gradient(to var(--rv-shadow-dir-end),
+      light-dark(rgba(31, 30, 26, 0.07), rgba(0, 0, 0, 0.22)),
+      transparent);
 }
 
-.rv-table-wrap[data-scroll-start="true"]:not([data-view="cards"]) > .rv-table-viewport::before,
-.rv-table-wrap[data-scroll-end="true"]:not([data-view="cards"]) > .rv-table-viewport::after {
+.rv-table-wrap[data-scroll-start="true"]:not([data-view="cards"])>.rv-table-viewport::before,
+.rv-table-wrap[data-scroll-end="true"]:not([data-view="cards"])>.rv-table-viewport::after {
   opacity: 1;
 }
 
@@ -1520,11 +1578,9 @@ details[open] > summary {
   z-index: 5;
   opacity: 0;
   transition: opacity 0.18s ease;
-  background: linear-gradient(
-    to top,
-    light-dark(rgba(31, 30, 26, 0.07), rgba(0, 0, 0, 0.22)),
-    transparent
-  );
+  background: linear-gradient(to top,
+      light-dark(rgba(31, 30, 26, 0.07), rgba(0, 0, 0, 0.22)),
+      transparent);
 }
 
 .rv-table-wrap[data-scroll-bottom="true"]:not([data-view="cards"])::after {
@@ -1542,7 +1598,7 @@ details[open] > summary {
   outline-offset: -2px;
 }
 
-.rv-table-wrap[data-rv-tall="true"]:not([data-view="cards"]) > .rv-table-viewport > .rv-table-scroll {
+.rv-table-wrap[data-rv-tall="true"]:not([data-view="cards"])>.rv-table-viewport>.rv-table-scroll {
   max-block-size: min(32rem, 70svh);
 }
 
@@ -1620,22 +1676,22 @@ th code {
   overflow-wrap: anywhere;
 }
 
-tbody tr:last-child > td,
-tbody tr:last-child > th {
+tbody tr:last-child>td,
+tbody tr:last-child>th {
   border-bottom: 0;
 }
 
-.rv-table-wrap table:has(tfoot) tbody tr:last-child > :is(td, th) {
+.rv-table-wrap table:has(tfoot) tbody tr:last-child> :is(td, th) {
   border-bottom: 1px solid var(--rv-border);
 }
 
-tfoot tr:last-child > td,
-tfoot tr:last-child > th {
+tfoot tr:last-child>td,
+tfoot tr:last-child>th {
   border-bottom: 0;
 }
 
-tbody tr:hover > td,
-tbody tr:hover > th {
+tbody tr:hover>td,
+tbody tr:hover>th {
   background: color-mix(in srgb, var(--rv-bg-subtle) 55%, var(--rv-bg-elevated));
 }
 
@@ -1652,38 +1708,38 @@ tbody tr:hover > th {
   box-shadow: 0 3px 6px -4px light-dark(rgba(31, 30, 26, 0.10), rgba(0, 0, 0, 0.28));
 }
 
-.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) :is(thead, tbody, tfoot) > tr > :first-child {
+.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) :is(thead, tbody, tfoot)>tr> :first-child {
   position: sticky;
   inset-inline-start: 0;
   box-shadow: inset -1px 0 0 var(--rv-border);
 }
 
-.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tbody > tr:not(:last-child) > :first-child,
-.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) table:has(tfoot) tbody > tr:last-child > :first-child {
+.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tbody>tr:not(:last-child)> :first-child,
+.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) table:has(tfoot) tbody>tr:last-child> :first-child {
   border-bottom-color: transparent;
   box-shadow: inset -1px 0 0 var(--rv-border), inset 0 -1px 0 var(--rv-border);
 }
 
-.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tbody > tr > :first-child {
+.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tbody>tr> :first-child {
   z-index: 2;
   background: var(--rv-bg-elevated);
 }
 
-.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tbody > tr:hover > :first-child {
+.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tbody>tr:hover> :first-child {
   background: color-mix(in srgb, var(--rv-bg-subtle) 55%, var(--rv-bg-elevated));
 }
 
-.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tfoot > tr > :first-child {
+.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) tfoot>tr> :first-child {
   z-index: 2;
   background: color-mix(in srgb, var(--rv-bg-subtle) 55%, var(--rv-bg-elevated));
 }
 
-.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) thead > tr > :first-child {
+.rv-table-wrap[data-sticky-col="true"]:not([data-view="cards"]) thead>tr> :first-child {
   z-index: 4;
   background: var(--rv-bg-subtle);
 }
 
-.rv-table-wrap[data-rv-tall="true"][data-sticky-col="true"][data-scroll-top="true"]:not([data-view="cards"]) thead > tr > :first-child {
+.rv-table-wrap[data-rv-tall="true"][data-sticky-col="true"][data-scroll-top="true"]:not([data-view="cards"]) thead>tr> :first-child {
   box-shadow: inset -1px 0 0 var(--rv-border), 0 3px 6px -4px light-dark(rgba(31, 30, 26, 0.10), rgba(0, 0, 0, 0.28));
 }
 
@@ -1697,13 +1753,13 @@ tbody tr:hover > th {
   overflow: visible;
 }
 
-.rv-table-wrap[data-view="cards"] > .rv-table-bar {
+.rv-table-wrap[data-view="cards"]>.rv-table-bar {
   padding: 0 0 0.55rem;
   border-bottom: 0;
   background: transparent;
 }
 
-.rv-table-wrap[data-view="cards"] > .rv-table-viewport > .rv-table-scroll {
+.rv-table-wrap[data-view="cards"]>.rv-table-viewport>.rv-table-scroll {
   overflow: visible;
   max-block-size: none;
   background: transparent;
@@ -1750,7 +1806,7 @@ tbody tr:hover > th {
   padding-top: 0.75rem;
 }
 
-@container rv-table (inline-size >= 42rem) {
+@container rv-table (inline-size >=42rem) {
   .rv-table-wrap[data-view="cards"] tbody:has(> tr:nth-child(2)) {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1767,11 +1823,11 @@ tbody tr:hover > th {
   overflow: hidden;
 }
 
-.rv-table-wrap[data-view="cards"] tbody tr:hover > :is(td, th) {
+.rv-table-wrap[data-view="cards"] tbody tr:hover> :is(td, th) {
   background: transparent;
 }
 
-.rv-table-wrap[data-view="cards"] :is(tbody, tfoot) tr > :is(td, th) {
+.rv-table-wrap[data-view="cards"] :is(tbody, tfoot) tr> :is(td, th) {
   position: static;
   padding: 0.58rem 0.85rem;
   border-bottom: 1px solid var(--rv-border);
@@ -1779,18 +1835,18 @@ tbody tr:hover > th {
   overflow-wrap: anywhere;
 }
 
-.rv-table-wrap[data-view="cards"] :is(tbody, tfoot) tr > :is(td, th):first-child {
+.rv-table-wrap[data-view="cards"] :is(tbody, tfoot) tr> :is(td, th):first-child {
   background: color-mix(in srgb, var(--rv-bg-subtle) 65%, var(--rv-bg-elevated));
   font-weight: 600;
   color: var(--rv-text);
   padding: 0.62rem 0.85rem;
 }
 
-.rv-table-wrap[data-view="cards"] tbody tr:hover > :is(td, th):first-child {
+.rv-table-wrap[data-view="cards"] tbody tr:hover> :is(td, th):first-child {
   background: color-mix(in srgb, var(--rv-bg-subtle) 65%, var(--rv-bg-elevated));
 }
 
-.rv-table-wrap[data-view="cards"] :is(tbody, tfoot) tr > :is(td, th):last-child {
+.rv-table-wrap[data-view="cards"] :is(tbody, tfoot) tr> :is(td, th):last-child {
   border-bottom: 0;
 }
 
@@ -1866,4 +1922,114 @@ pre.mermaid .nodeLabel p {
   justify-content: center;
   font-style: normal;
   flex-shrink: 0;
+}
+
+[data-icon]:empty,
+[data-icon][hidden] {
+  display: none;
+}
+
+/* ==========================================================================
+   Print
+   ========================================================================== */
+
+@media print {
+  :root {
+    color-scheme: light;
+    --rv-bg: #ffffff;
+    --rv-bg-elevated: #ffffff;
+    --rv-bg-subtle: #f4f1ea;
+    --rv-border: #d8d1c2;
+    --rv-border-strong: #b8ae99;
+    --rv-text: #1f1e1a;
+    --rv-text-muted: #4a473f;
+    --rv-text-faint: #666156;
+    --rv-code-bg: #f7f4ec;
+    --rv-shadow-sm: none;
+    --rv-shadow-md: none;
+  }
+
+  body {
+    background: #ffffff;
+    color: #1f1e1a;
+  }
+
+  .rv-topbar,
+  .rv-sidebar,
+  .rv-copy-code,
+  .rv-table-switch,
+  .rv-table-hint {
+    display: none !important;
+  }
+
+  .rv-shell {
+    display: block !important;
+    max-width: none;
+    padding: 0;
+  }
+
+  .rv-main {
+    max-width: none;
+    margin: 0;
+  }
+
+  .rv-code-wrap,
+  pre,
+  pre:not(.mermaid) {
+    overflow: visible !important;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  pre.mermaid {
+    overflow: visible !important;
+    max-width: 100%;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  pre.mermaid svg {
+    max-width: 100%;
+  }
+
+  .rv-table-wrap {
+    overflow: visible;
+    box-shadow: none;
+  }
+
+  .rv-table-wrap::after,
+  .rv-table-viewport::before,
+  .rv-table-viewport::after {
+    display: none;
+  }
+
+  .rv-table-scroll {
+    overflow: visible !important;
+    max-block-size: none !important;
+  }
+
+  .rv-table-wrap table {
+    min-width: 0 !important;
+    width: 100%;
+  }
+
+  .rv-table-wrap :is(thead, tbody, tfoot)>tr> :first-child,
+  .rv-table-wrap thead th,
+  table caption {
+    position: static !important;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr,
+  .card,
+  .stat,
+  .callout,
+  .chart-box,
+  blockquote {
+    box-shadow: none;
+    break-inside: avoid;
+  }
 }

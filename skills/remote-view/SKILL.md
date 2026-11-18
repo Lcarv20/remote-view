@@ -43,6 +43,7 @@ Pages are frequently read on phones (`320px–390px` wide) as well as desktops:
 - **Structure with clean vertical rhythm:** Place elements directly inside `<main>` or group each section in `<section class="stack">` (or `<section>` / `<header>`). Pair each `<h2>` with at most one brief intro line before a list, table, diagram, or code block.
 - **Keep prose and lists scannable:** Prefer short 1–3 line paragraphs and tight 1-line bullets. Avoid stuffing 3+ inline `<code>` chips into every sentence.
 - **Keep code lines narrow (~55–65 chars):** Trim snippets to the 5–15 lines that show the core idea and wrap long expressions to ~55–65 characters so mobile readers don't scroll horizontally on every line.
+- **HTML-escape `<`, `>`, `&` inside `<pre><code>`:** Escape them as `&lt;`, `&gt;`, `&amp;` (e.g., generics like `Promise&lt;T&gt;`, JSX/HTML, bash heredocs `&lt;&lt;'EOF'`) so the browser does not parse them as HTML tags.
 - **Never cram wide content into `.grid-2` / `.grid-3`:** Do **NOT** place `<pre>` code blocks, `<table>`s, or wide Mermaid diagrams side-by-side inside `.grid-2` or `.grid-3`. Use full-width `<div class="tabs" data-tabs>` or stacked sections for comparing code/diagrams; reserve `.grid-2` / `.grid-3` / `.grid-4` strictly for short `.stat` tiles or compact `.card` summaries.
 - **Keep tables and diagrams compact:** Limit tables to 2–4 columns with short cell phrases (not multi-sentence paragraphs or long call chains). Keep Mermaid nodes to 2–4 words (max 2 short lines), and avoid `<T>` inside Mermaid labels (use `Prop(T)` or `Prop[T]` because Mermaid parses `<T>` as HTML).
 - **Avoid card & box pollution:** Components (`.card`, `.stat`, `<details>`, `.callout`) are optional. Plain headings, prose, lists, and tables read calmer than wrapping every point in a bordered box.
@@ -53,8 +54,8 @@ Only these classes exist in `assets/rv.css` (plus plain semantic HTML `h1..h4`, 
 
 - **Layout & Text Utilities:** `.stack`, `.row`, `.cluster`, `.split`, `.grid-2`, `.grid-3`, `.grid-4`, `.gap-sm`, `.gap-md`, `.gap-lg`, `.muted`, `.faint`, `.mono`, `.text-sm`, `.text-xs`.
 - **Navigation Sidebar + Mobile Drawer:** `<nav class="rv-sidebar" aria-label="Sections">` with `.rv-sidebar-title` and `a.active` (`aria-current="page"`). Turns into a topbar burger drawer below `960px`.
-- **Optional Components:** `<article class="card">` (`.interactive`, direct `header`/`footer`), `<article class="stat">` (`.stat-label`, `.stat-value`, `.stat-note`), `<span class="badge [brand|info|success|warning|danger] [pill]">`, `<aside class="callout [info|success|warning|danger]">` (`.callout-icon`, `.callout-body`), `<div class="tabs" data-tabs>`, `<ol class="steps">`, `<div class="progress"><span>`, `<button class="btn [primary|danger|ghost]">`, native `<details>` (open by default; add `data-closed` to start collapsed), and `.rv-menu[popover]` (`.rv-menu-list`).
-- **Icons, Code, Charts, Diagrams, Math:** `<i data-icon="bolt"></i>` (54 Tabler outline icons bundled locally; other outline icon names resolve automatically), `<pre><code class="language-...">` (Highlight.js + language bar + Copy), `<div class="chart-box"><canvas id="c1"></canvas></div>` (`Chart`), `<pre class="mermaid">...</pre>` (Mermaid v12), `<table>` (auto-wrapped with readable column sizing, horizontal scroll cues, and a `Table / Cards` toggle), and KaTeX (`$$...$$`, `\[...\]`, `\(...\)`; single `$` stays safe).
+- **Optional Components:** `<article class="card">` (`.interactive`, direct `header`/`footer`), `<article class="stat">` (`.stat-label`, `.stat-value`, `.stat-note`), `<span class="badge [brand|info|success|warning|danger] [pill]">`, `<aside class="callout [info|success|warning|danger]">` (`.callout-icon`, `.callout-body`), `<div class="tabs" data-tabs>`, `<ol class="steps">`, `<div class="progress" data-value="65"><span></span></div>` or native `<progress value="65" max="100"></progress>`, `<button class="btn [primary|danger|ghost]">`, native `<details>` (open by default; add `data-closed` to start collapsed), and `.rv-menu[popover]` (`.rv-menu-list`).
+- **Icons, Code, Charts, Diagrams, Math:** `<i data-icon="bolt"></i>` (55 Tabler outline icons bundled locally; other outline icon names resolve automatically), `<pre><code class="language-...">` (Highlight.js + language bar + Copy), `<div class="chart-box"><canvas id="c1"></canvas></div>` (`Chart`), `<pre class="mermaid">...</pre>` (Mermaid v12), `<table>` (auto-wrapped with readable column sizing, horizontal scroll cues, and a `Table / Cards` toggle), and KaTeX (`$$...$$`, `\[...\]`, `\(...\)`; single `$` stays safe).
 - See [references/components.md](references/components.md) for exact markup examples.
 
 ## 2. Standalone HTML File (`drop-html --raw`)
@@ -81,10 +82,12 @@ drop-dir --id preview-v2 dist/
 ## Useful Options & Management
 
 - `--id <slug>`: stable custom URL slug instead of a random 6-character ID
+- `--title <text>`: page `<title>` (auto-extracts the first `<h1>` when omitted, falling back to `Drop <id>`)
 - `--theme auto|dark|light`: default color scheme for wrapped fragments (default: `auto` / system)
-- `--local` / `-o <path>`: write self-contained HTML locally without SSH
+- `--local` / `-o <path>`: write HTML locally without SSH (local CSS/JS/fonts are inlined; external libraries—Highlight.js, Chart.js, Mermaid, KaTeX—load from jsDelivr when online)
+- `--tunnel`: use the active Pi tunnel URL from `tunel-view-pi.ref` (available on `drop-html` and `drop-dir`)
 - `--sync-assets`: force re-upload of `assets/rv.*` and `assets/fonts/*` to `/_assets/` on the Pi
 - `--host <user@host>` / `--url <base-url>`: override configured SSH target or public URL
 - `--list`, `--rm <id>`, `--prune <days>`, `--check`: inspect, remove, or diagnose drops on the server
 
-Published URLs are served over HTTP/HTTPS, so they can be opened directly from remote devices (such as a phone) or inspected with browser tools. For off-LAN or mobile HTTPS access via an ephemeral 12-hour Cloudflare Quick Tunnel, use the `/tunel-view` skill (`tunel-view up`).
+Published URLs are served over HTTP/HTTPS, so they can be opened directly from remote devices (such as a phone) or inspected with browser tools. For off-LAN or mobile HTTPS access via an ephemeral 12-hour Cloudflare Quick Tunnel, use the `tunel-view` skill (`tunel-view up`).

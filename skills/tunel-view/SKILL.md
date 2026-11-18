@@ -12,10 +12,10 @@ Use `tunel-view` to expose an HTML preview or local dev server over an ephemeral
 
 ## Strict Rules
 
-1. **12-hour maximum lifetime by default:** `tunel-view up` enforces `--ttl 12h` automatically. **Never** pass a longer `--ttl` (or `--ttl 0` / `none`) unless the user **explicitly** asks for more than 12 hours. Always mention the expiry time when sharing the URL.
+1. **12-hour maximum lifetime by default:** `tunel-view up` enforces `--ttl 12h` automatically. **Never** pass a longer `--ttl` (or `--ttl 0` / `none`) unless the user **explicitly** asks for more than 12 hours. Always mention the expiry time when sharing the URL (check `tunel-view status` or `tunel-view up` stderr for the exact expiry timestamp).
 2. **Keep the same server and tunnel across back-and-forth edits — just update the file:**
-   - **Local HTML file or directory (`--serve`):** Start once with `tunel-view up --serve /path/to/preview.html` (or a folder). When the user asks for changes, **just edit/overwrite that file in place** (for example via `drop-html -o /path/to/preview.html` or file edits). Do **not** recreate the server or tunnel on every edit—the user simply refreshes the same URL.
-   - **Raspberry Pi (`remote-view`):** Start the tunnel once (`TUNNEL_URL="$(tunel-view up)"`) and publish with a stable slug (`drop-html --id <slug> --url "$TUNNEL_URL"`). On follow-up edits, **re-upload to the same `--id`** (`drop-html --id <slug> --url "$(tunel-view url --pi)"`); do not spawn a new tunnel every turn.
+   - **Local HTML file or directory (`--serve`):** Start once with `tunel-view up --serve /path/to/preview.html` (or a folder). When the user asks for changes, **just edit/overwrite that file in place** (for example via `drop-html -o /path/to/preview.html` or file edits). Do **not** recreate the server or tunnel on every edit—the user simply refreshes the same URL. Single-file `--serve /tmp/preview.html` only exposes that specific file (not sibling files in `/tmp`) with `Cache-Control: no-store`.
+   - **Raspberry Pi (`remote-view`):** Start the tunnel once (`TUNNEL_URL="$(tunel-view up)"`) and publish with a stable slug (`drop-html --id <slug> --url "$TUNNEL_URL"` or `drop-html --id <slug> --tunnel`). On follow-up edits, **re-upload to the same `--id`** (`drop-html --id <slug> --tunnel` or `TUNNEL_URL="$(tunel-view up)" && drop-html --id <slug> --url "$TUNNEL_URL"`); do not spawn a new tunnel every turn.
    - **External local dev server (`--port` / `--target`):** Tunnel the running server once (`tunel-view up --port 5173`) and update source files in place.
    - **Only replace when actually switching targets:** Running `tunel-view up` with the same target reuses the active server and tunnel; running it with a different target/path/port (or `--restart`) kills the previous tunnel/managed server first so duplicates never pile up. If you manually spawned an external dev server and must launch a replacement, kill the old server process first.
 3. **Cancel on demand (`tunel-view down`):** Whenever the user asks to stop/cancel the server or tunnel, or when temporary previewing is finished, run `tunel-view down` (stops both `cloudflared` and any `--serve` HTTP server cleanly).
@@ -52,8 +52,10 @@ drop-html --id preview --url "$TUNNEL_URL" --title "Preview" <<'REMOTE_VIEW_EOF'
 <p>First draft.</p>
 REMOTE_VIEW_EOF
 
-# Follow-up edits: overwrite the same slug using the active tunnel URL
-drop-html --id preview --url "$(tunel-view url --pi)" --title "Preview" page.html
+# Follow-up edits: overwrite the same slug using --tunnel (or reuse tunel-view up)
+drop-html --id preview --tunnel --title "Preview" page.html
+# or:
+TUNNEL_URL="$(tunel-view up)" && drop-html --id preview --url "$TUNNEL_URL" --title "Preview" page.html
 ```
 
 Or publish a static build directory:

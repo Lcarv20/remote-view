@@ -68,6 +68,9 @@
       if (Chart.defaults.plugins?.legend?.labels) {
         Chart.defaults.plugins.legend.labels.color = textColor;
       }
+      if (Chart.defaults.plugins?.title) {
+        Chart.defaults.plugins.title.color = textColor;
+      }
       if (Chart.defaults.scale?.ticks) {
         Chart.defaults.scale.ticks.color = mutedColor;
       }
@@ -77,10 +80,22 @@
 
       const instances = Chart.instances ? Object.values(Chart.instances) : [];
       for (const chart of instances) {
+        const userOpts = chart?.config?.options;
+        if (chart?.options && !userOpts?.color) {
+          chart.options.color = textColor;
+        }
+        if (chart?.options?.plugins?.legend?.labels && !userOpts?.plugins?.legend?.labels?.color) {
+          chart.options.plugins.legend.labels.color = textColor;
+        }
+        if (chart?.options?.plugins?.title && !userOpts?.plugins?.title?.color) {
+          chart.options.plugins.title.color = textColor;
+        }
         if (chart?.options?.scales) {
-          for (const axis of Object.values(chart.options.scales)) {
-            if (axis.ticks) axis.ticks.color = mutedColor;
-            if (axis.grid) axis.grid.color = gridColor;
+          for (const [axisKey, axis] of Object.entries(chart.options.scales)) {
+            const userAxis = userOpts?.scales?.[axisKey];
+            if (axis.ticks && !userAxis?.ticks?.color) axis.ticks.color = mutedColor;
+            if (axis.grid && !userAxis?.grid?.color) axis.grid.color = gridColor;
+            if (axis.title && !userAxis?.title?.color) axis.title.color = mutedColor;
           }
         }
         chart.update("none");

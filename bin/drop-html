@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+shopt -u patsub_replacement 2>/dev/null || true
 
 RV_PROG="drop-html"
 _src="${BASH_SOURCE[0]}"
@@ -26,7 +27,7 @@ or save/inspect it locally. Reads from stdin when FILE is omitted or '-'.
 If FILE is a directory, delegates to drop-dir.
 
 Options:
-  -t, --title <text>       Page title (default: "Drop <id>")
+  -t, --title <text>       Page title (default: first <h1> or "Drop <id>")
   -i, --id <slug>          Custom filename slug without .html (default: random 6-char ID)
       --theme <mode>       Default theme: auto | dark | light (default: auto / system)
       --raw                Upload input verbatim without wrapping in base.html
@@ -37,6 +38,7 @@ Options:
       --sync-assets        Force re-upload of local UI assets (CSS/JS/fonts) to Pi /_assets/
       --host <user@host>   Override SSH target (default: $REMOTE_VIEW_SSH_HOST)
       --url <base-url>     Override public base URL (default: $REMOTE_VIEW_PUBLIC_URL)
+      --tunnel             Use active Pi tunnel URL from ~/.cache/remote-view/tunel-view-pi.ref
       --list               List published drops on the Pi
       --rm <id>            Delete <id>.html or <id>/ from the Pi
       --prune <days>       Delete drops older than <days> days on the Pi
@@ -64,7 +66,85 @@ html_escape() {
 compute_assets_hash() {
   local sum_cmd="sha256sum"
   command -v sha256sum >/dev/null 2>&1 || sum_cmd="shasum -a 256"
-  cat "$ASSETS_DIR/rv.css" "$ASSETS_DIR/rv.js" | $sum_cmd | awk '{print substr($1, 1, 10)}'
+  local files=("$ASSETS_DIR/rv.css" "$ASSETS_DIR/rv.js")
+  local f
+  for f in "$ASSETS_DIR"/fonts/*.woff2; do
+    [[ -r "$f" ]] && files+=("$f")
+  done
+  cat "${files[@]}" | $sum_cmd | awk '{print substr($1, 1, 10)}'
+}
+
+inline_css_fonts() {
+  local css_file="$1"
+  local fonts_dir="$2"
+  local line fname fpath b64
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == *"./fonts/"* && "$line" =~ url\([\"\']?\./fonts/([^/\"\'\)]+\.woff2)[\"\']?\) ]]; then
+      fname="${BASH_REMATCH[1]}"
+      fpath="${fonts_dir}/${fname}"
+      if [[ -r "$fpath" ]] && command -v base64 >/dev/null 2>&1; then
+        b64="$(base64 < "$fpath" | tr -d '\r\n')"
+        line="${line//"${BASH_REMATCH[0]}"/"url(\"data:font/woff2;base64,${b64}\")"}"
+      fi
+    fi
+    printf '%s\n' "$line"
+  done < "$css_file"
+}
+
+detect_raw_html() {
+  local file="$1"
+  head -n 25 -- "$file" | awk '
+    BEGIN { buf = "" }
+    {
+      if (NR == 1) sub(/^\xef\xbb\xbf/, "")
+      buf = buf " " $0
+    }
+    END {
+      while (match(buf, /<!--/)) {
+        pre = substr(buf, 1, RSTART - 1)
+        rest = substr(buf, RSTART + 4)
+        end_idx = index(rest, "-->")
+        if (end_idx == 0) {
+          buf = pre
+          break
+        }
+        buf = pre " " substr(rest, end_idx + 3)
+      }
+      sub(/^[[:space:]]+/, "", buf)
+      low = tolower(buf)
+      if (low ~ /^<!doctype([[:space:]]|>)/ || low ~ /^<html([[:space:]]|>)/) {
+        exit 0
+      }
+      exit 1
+    }
+  '
+}
+
+extract_h1_title() {
+  local file="$1"
+  awk '
+    BEGIN { buf = "" }
+    { buf = (NR == 1 ? $0 : buf " " $0) }
+    END {
+      low = tolower(buf)
+      if (!match(low, /<h1([[:space:]][^>]*)?>/)) exit 0
+      rest = substr(buf, RSTART + RLENGTH)
+      low_rest = tolower(rest)
+      if (!match(low_rest, /<\/h1[[:space:]]*>/)) exit 0
+      inner = substr(rest, 1, RSTART - 1)
+      gsub(/<[^>]*>/, " ", inner)
+      gsub(/&nbsp;/, " ", inner)
+      gsub(/&amp;/, "\\&", inner)
+      gsub(/&lt;/, "<", inner)
+      gsub(/&gt;/, ">", inner)
+      gsub(/&quot;/, "\"", inner)
+      gsub(/&#39;|&apos;/, "\x27", inner)
+      gsub(/[[:space:]]+/, " ", inner)
+      sub(/^[[:space:]]+/, "", inner)
+      sub(/[[:space:]]+$/, "", inner)
+      print inner
+    }
+  ' "$file"
 }
 
 ensure_remote_assets() {
@@ -88,7 +168,9 @@ ensure_remote_assets() {
     cp "$ASSETS_DIR/fonts/"* "$tmp_stage/fonts/" 2>/dev/null || true
   fi
 
-  if ! tar -C "$tmp_stage" -cf - . | rv_ssh "umask 022 && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR/_assets' && tar -C '$REMOTE_VIEW_REMOTE_DIR/_assets' -xf - && chmod -R a+rX -- '$REMOTE_VIEW_REMOTE_DIR/_assets'"; then
+  local q_assets_dir
+  printf -v q_assets_dir '%q' "$REMOTE_VIEW_REMOTE_DIR/_assets"
+  if ! tar -C "$tmp_stage" -cf - . | rv_ssh "umask 022 && mkdir -p -- $q_assets_dir && tar -C $q_assets_dir -xf - && chmod -R a+rX -- $q_assets_dir"; then
     rm -rf -- "$tmp_stage"
     return 1
   fi
@@ -120,7 +202,7 @@ assemble_html() {
   if [[ "$inline_assets" -eq 1 ]]; then
     {
       echo "<style>"
-      cat "$ASSETS_DIR/rv.css"
+      inline_css_fonts "$ASSETS_DIR/rv.css" "$ASSETS_DIR/fonts"
       echo "</style>"
     } > "$css_tag_file"
     {
@@ -193,6 +275,7 @@ LOCAL_MODE=0
 OUT_PATH=""
 STDOUT_MODE=0
 SYNC_ASSETS=0
+USE_TUNNEL=0
 INPUT_FILE="-"
 ACTION="publish"
 ACTION_ARG=""
@@ -245,8 +328,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --url)
       [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      rv_validate_url "$2"
       REMOTE_VIEW_PUBLIC_URL="$2"
       shift 2
+      ;;
+    --tunnel)
+      USE_TUNNEL=1
+      shift
       ;;
     --list)
       ACTION="list"
@@ -286,6 +374,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$USE_TUNNEL" -eq 1 ]]; then
+  REMOTE_VIEW_PUBLIC_URL="$(rv_resolve_tunnel_url)"
+fi
+
 case "$ACTION" in
   check) rv_run_check ;;
   list)  rv_list_drops; exit 0 ;;
@@ -294,6 +386,12 @@ case "$ACTION" in
 esac
 
 if [[ "$INPUT_FILE" != "-" && -d "$INPUT_FILE" ]]; then
+  [[ "$STDOUT_MODE" -eq 0 ]] || rv_die "--stdout is not supported for directory uploads (use --local or -o)"
+  if [[ "$SYNC_ASSETS" -eq 1 && "$LOCAL_MODE" -eq 0 && -z "$OUT_PATH" ]]; then
+    [[ -r "$ASSETS_DIR/rv.css" && -r "$ASSETS_DIR/rv.js" ]] || rv_die "assets not found in $ASSETS_DIR"
+    ASSETS_HASH="$(compute_assets_hash)"
+    ensure_remote_assets "$ASSETS_HASH" 1 || rv_die "failed to sync assets to $REMOTE_VIEW_SSH_HOST"
+  fi
   exec "$SCRIPT_DIR/drop-dir" "${ORIG_ARGS[@]}"
 fi
 
@@ -308,38 +406,44 @@ else
   ID="$(rv_generate_id)"
 fi
 
-if [[ -z "$TITLE" ]]; then
-  TITLE="Drop ${ID}"
-fi
-
 GENERATED_AT="$(date '+%Y-%m-%d %H:%M')"
 TMP_IN="$(mktemp)"
 TMP_OUT="$(mktemp)"
 trap 'rm -f -- "$TMP_IN" "$TMP_OUT"' EXIT
 
 if [[ "$INPUT_FILE" == "-" ]]; then
-  if [[ -t 0 ]]; then
-    if [[ "$SYNC_ASSETS" -eq 1 ]]; then
-      ASSETS_HASH="$(compute_assets_hash)"
-      ensure_remote_assets "$ASSETS_HASH" 1 || rv_die "failed to sync assets to $REMOTE_VIEW_SSH_HOST"
-      echo "Synced _assets (rv.${ASSETS_HASH}.css / rv.${ASSETS_HASH}.js)"
-      exit 0
-    fi
+  if [[ ! -t 0 ]]; then
+    cat > "$TMP_IN"
+  elif [[ "$SYNC_ASSETS" -eq 0 ]]; then
     rv_die "no input provided on stdin and no file argument given (try --help)"
   fi
-  cat > "$TMP_IN"
 else
   [[ -r "$INPUT_FILE" ]] || rv_die "cannot read file: $INPUT_FILE"
   cat -- "$INPUT_FILE" > "$TMP_IN"
 fi
 
-[[ -s "$TMP_IN" ]] || rv_die "input HTML is empty"
+if [[ ! -s "$TMP_IN" ]]; then
+  if [[ "$SYNC_ASSETS" -eq 1 ]]; then
+    [[ -r "$ASSETS_DIR/rv.css" && -r "$ASSETS_DIR/rv.js" ]] || rv_die "assets not found in $ASSETS_DIR"
+    ASSETS_HASH="$(compute_assets_hash)"
+    ensure_remote_assets "$ASSETS_HASH" 1 || rv_die "failed to sync assets to $REMOTE_VIEW_SSH_HOST"
+    echo "Synced _assets (rv.${ASSETS_HASH}.css / rv.${ASSETS_HASH}.js)"
+    exit 0
+  fi
+  rv_die "input HTML is empty"
+fi
 
 # Auto-detect full HTML documents to avoid double-wrapping <html>
-if [[ "$RAW_MODE" -eq 0 ]]; then
-  first_nonempty="$(grep -m 1 -E '[^[:space:]]' "$TMP_IN" || true)"
-  if [[ "$first_nonempty" =~ ^[[:space:]]*\<(!DOCTYPE|!doctype|html|HTML)[[:space:]\>] ]]; then
-    RAW_MODE=1
+if [[ "$RAW_MODE" -eq 0 ]] && detect_raw_html "$TMP_IN"; then
+  RAW_MODE=1
+fi
+
+if [[ -z "$TITLE" ]]; then
+  if [[ "$RAW_MODE" -eq 0 ]]; then
+    TITLE="$(extract_h1_title "$TMP_IN")"
+  fi
+  if [[ -z "$TITLE" ]]; then
+    TITLE="Drop ${ID}"
   fi
 fi
 
@@ -377,11 +481,22 @@ if [[ "$LOCAL_MODE" -eq 1 ]]; then
   exit 0
 fi
 
+rv_validate_url "$REMOTE_VIEW_PUBLIC_URL"
+
 if [[ "$RAW_MODE" -eq 0 ]]; then
   ensure_remote_assets "$ASSETS_HASH" "$SYNC_ASSETS" || rv_die "failed to sync UI assets to $REMOTE_VIEW_SSH_HOST:$REMOTE_VIEW_REMOTE_DIR/_assets"
+elif [[ "$SYNC_ASSETS" -eq 1 ]]; then
+  [[ -r "$ASSETS_DIR/rv.css" && -r "$ASSETS_DIR/rv.js" ]] || rv_die "assets not found in $ASSETS_DIR"
+  ASSETS_HASH="$(compute_assets_hash)"
+  ensure_remote_assets "$ASSETS_HASH" 1 || rv_die "failed to sync UI assets to $REMOTE_VIEW_SSH_HOST:$REMOTE_VIEW_REMOTE_DIR/_assets"
 fi
 
-if ! rv_ssh "umask 022 && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR' && cat > '$REMOTE_VIEW_REMOTE_DIR/${ID}.html'" < "$TMP_OUT"; then
+printf -v q_dir '%q' "$REMOTE_VIEW_REMOTE_DIR"
+printf -v q_target '%q' "${REMOTE_VIEW_REMOTE_DIR}/${ID}.html"
+printf -v q_prefix '%q' "${REMOTE_VIEW_REMOTE_DIR}/.${ID}.tmp.XXXXXX"
+remote_cmd="umask 022 && mkdir -p -- $q_dir && tmp=\$(mktemp -- $q_prefix) && trap 'rm -f -- \"\$tmp\"' EXIT && cat > \"\$tmp\" && chmod 0644 -- \"\$tmp\" && mv -f -- \"\$tmp\" $q_target && trap - EXIT"
+
+if ! rv_ssh "$remote_cmd" < "$TMP_OUT"; then
   echo "drop-html: failed to upload to $REMOTE_VIEW_SSH_HOST:$REMOTE_VIEW_REMOTE_DIR/${ID}.html" >&2
   echo "drop-html: run 'drop-html --check' to diagnose, or use '--local' for local output." >&2
   exit 1

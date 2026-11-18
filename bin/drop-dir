@@ -29,6 +29,7 @@ Options:
   -o, --out <path>         Copy directory to <path> instead of uploading
       --host <user@host>   Override SSH target (default: $REMOTE_VIEW_SSH_HOST)
       --url <base-url>     Override public base URL (default: $REMOTE_VIEW_PUBLIC_URL)
+      --tunnel             Use active Pi tunnel URL from ~/.cache/remote-view/tunel-view-pi.ref
       --no-warn-base       Suppress root-relative asset path hint
       --list               List published drops on the Pi
       --rm <id>            Delete <id>/ or <id>.html from the Pi
@@ -42,6 +43,7 @@ CUSTOM_ID=""
 LOCAL_MODE=0
 OUT_PATH=""
 WARN_BASE=1
+USE_TUNNEL=0
 SRC_DIR=""
 ACTION="publish"
 ACTION_ARG=""
@@ -69,8 +71,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --url)
       [[ $# -ge 2 ]] || rv_die "missing value for $1"
+      rv_validate_url "$2"
       REMOTE_VIEW_PUBLIC_URL="$2"
       shift 2
+      ;;
+    --tunnel)
+      USE_TUNNEL=1
+      shift
       ;;
     --no-warn-base)
       WARN_BASE=0
@@ -96,10 +103,13 @@ while [[ $# -gt 0 ]]; do
       ACTION="check"
       shift
       ;;
-    # Ignore -t/--title or --theme gracefully if delegated from drop-html
+    # Ignore drop-html-specific flags gracefully if delegated from drop-html
     -t|--title|--theme)
       [[ $# -ge 2 ]] || rv_die "missing value for $1"
       shift 2
+      ;;
+    --raw|--sync-assets)
+      shift
       ;;
     -h|--help)
       usage
@@ -115,6 +125,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$USE_TUNNEL" -eq 1 ]]; then
+  REMOTE_VIEW_PUBLIC_URL="$(rv_resolve_tunnel_url)"
+fi
 
 case "$ACTION" in
   check) rv_run_check ;;
@@ -155,7 +169,15 @@ if [[ "$LOCAL_MODE" -eq 1 ]]; then
   exit 0
 fi
 
-if ! tar -C "$SRC_DIR" -cf - . | rv_ssh "umask 022 && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR' && rm -rf -- '$REMOTE_VIEW_REMOTE_DIR/${ID}' && mkdir -p -- '$REMOTE_VIEW_REMOTE_DIR/${ID}' && tar -C '$REMOTE_VIEW_REMOTE_DIR/${ID}' -xf - && chmod -R a+rX -- '$REMOTE_VIEW_REMOTE_DIR/${ID}'"; then
+rv_validate_url "$REMOTE_VIEW_PUBLIC_URL"
+
+printf -v q_dir '%q' "$REMOTE_VIEW_REMOTE_DIR"
+printf -v q_target '%q' "${REMOTE_VIEW_REMOTE_DIR}/${ID}"
+printf -v q_stage_prefix '%q' "${REMOTE_VIEW_REMOTE_DIR}/.${ID}.stage.XXXXXX"
+printf -v q_old_prefix '%q' "${REMOTE_VIEW_REMOTE_DIR}/.${ID}.old.XXXXXX"
+remote_cmd="umask 022 && mkdir -p -- $q_dir && stage=\$(mktemp -d -- $q_stage_prefix) && trap 'rm -rf -- \"\$stage\"' EXIT && tar -C \"\$stage\" -xf - && chmod -R a+rX -- \"\$stage\" && if [ -e $q_target ]; then old=\$(mktemp -u -- $q_old_prefix) && mv -- $q_target \"\$old\" && if ! mv -- \"\$stage\" $q_target; then mv -- \"\$old\" $q_target || true; exit 1; fi && rm -rf -- \"\$old\"; else mv -- \"\$stage\" $q_target; fi && trap - EXIT"
+
+if ! tar -C "$SRC_DIR" -cf - . | rv_ssh "$remote_cmd"; then
   echo "drop-dir: failed to upload '$SRC_DIR' to $REMOTE_VIEW_SSH_HOST:$REMOTE_VIEW_REMOTE_DIR/${ID}/" >&2
   echo "drop-dir: run 'drop-dir --check' to diagnose, or use '--local' for local copy." >&2
   exit 1

@@ -173,6 +173,23 @@ STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/remote-view"
 STATE_FILE="${STATE_DIR}/tunel-view.state"
 PID_FILE="${STATE_DIR}/tunel-view.pid"
 LOG_FILE="${STATE_DIR}/tunel-view.log"
+LOCK_FILE="${STATE_DIR}/tunel-view.lock"
+_LOCK_HELD="${_TV_LOCK_HELD:-0}"
+
+with_lock() {
+  if [[ "${_LOCK_HELD}" -eq 1 ]] || ! command -v flock >/dev/null 2>&1; then
+    "$@"
+    return $?
+  fi
+  mkdir -p -- "$STATE_DIR"
+  local rc=0
+  (
+    flock -x 9
+    _LOCK_HELD=1
+    "$@"
+  ) 9>"$LOCK_FILE" || rc=$?
+  return "$rc"
+}
 
 kv_read() {
   local file="$1" key="$2" line
@@ -222,6 +239,40 @@ pid_is_cloudflared() {
   local pid="$1"
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
   [[ "$(ps -p "$pid" -o comm= 2>/dev/null | tr -d '[:space:]')" == "cloudflared" ]]
+}
+
+pid_is_our_server() {
+  local pid="$1"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  local info
+  info="$(ps -p "$pid" -o comm=,args= 2>/dev/null || true)"
+  [[ -n "$info" ]] || return 1
+  printf '%s\n' "$info" | awk '
+    $1 ~ /^python3(\.[0-9]+)?$/ && index($0, "tunel-view-http-server") > 0 { found=1; exit }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+stop_server_pid() {
+  local pid="$1"
+  pid_is_our_server "$pid" || return 1
+  kill -TERM "$pid" 2>/dev/null || true
+  local i
+  for (( i=0; i<15; i++ )); do
+    if ! pid_is_our_server "$pid"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+  for (( i=0; i<10; i++ )); do
+    if ! pid_is_our_server "$pid"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "tunel-view: failed to terminate HTTP server process: $pid" >&2
+  return 2
 }
 
 stop_session_set() {
@@ -300,16 +351,17 @@ stop_session_set() {
   return 2
 }
 
-worker_down() {
+_worker_down_impl() {
   local stopped_any=0
   local all_pids=()
-  local s_sid s_pgid s_cf s_rpid s_rid
+  local s_sid s_pgid s_cf s_srv s_rpid s_rid
   local p_sid p_pgid p_rpid p_rid
 
   s_rpid="$(kv_read "$STATE_FILE" "RUNNER_PID")"
   s_pgid="$(kv_read "$STATE_FILE" "PGID")"
   s_sid="$(kv_read "$STATE_FILE" "SID")"
   s_cf="$(kv_read "$STATE_FILE" "CLOUDFLARED_PID")"
+  s_srv="$(kv_read "$STATE_FILE" "SERVER_PID")"
   s_rid="$(kv_read "$STATE_FILE" "RUN_ID")"
   [[ -n "$s_sid" ]] || s_sid="$s_rpid"
   [[ -n "$s_pgid" ]] || s_pgid="$s_sid"
@@ -347,6 +399,21 @@ worker_down() {
     fi
   fi
 
+  if [[ -n "$s_srv" ]] && pid_is_our_server "$s_srv"; then
+    rc=0
+    stop_server_pid "$s_srv" || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+      stopped_any=1
+      local seen=0 existing
+      for existing in "${all_pids[@]:-}"; do
+        [[ "$existing" == "$s_srv" ]] && seen=1 && break
+      done
+      [[ "$seen" -eq 0 ]] && all_pids+=("$s_srv")
+    elif [[ "$rc" -eq 2 ]]; then
+      return 1
+    fi
+  fi
+
   rm -f -- "$STATE_FILE" "$PID_FILE"
 
   local pid_csv=""
@@ -354,6 +421,10 @@ worker_down() {
     pid_csv="$(IFS=,; printf '%s' "${all_pids[*]}")"
   fi
   printf 'STOPPED=%s\nSTOPPED_PIDS=%s\n' "$stopped_any" "$pid_csv"
+}
+
+worker_down() {
+  with_lock _worker_down_impl
 }
 
 worker_status() {
@@ -397,6 +468,9 @@ worker_status() {
   fi
 
   if [[ "$alive" -eq 0 ]]; then
+    if [[ "$srv_pid" =~ ^[1-9][0-9]*$ ]] && pid_is_our_server "$srv_pid"; then
+      stop_server_pid "$srv_pid" >/dev/null || true
+    fi
     rm -f -- "$STATE_FILE" "$PID_FILE"
     printf 'STATUS=inactive\n'
     return 0
@@ -433,14 +507,83 @@ worker_up() {
     return 1
   fi
 
+  local serve_target="${serve_path:-$serve_dir}"
   local serve_port=""
-  if [[ -n "$serve_dir" ]]; then
+  local server_py=""
+  if [[ -n "$serve_target" ]]; then
     command -v python3 >/dev/null 2>&1 || {
       echo "tunel-view: python3 is required for --serve" >&2
       return 1
     }
     serve_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
     target_url="http://127.0.0.1:${serve_port}"
+    read -r -d '' server_py <<'PY_EOF' || true
+# tunel-view-http-server
+import http.server
+import mimetypes
+import os
+import signal
+import sys
+import urllib.parse
+
+target_path = sys.argv[1]
+port = int(sys.argv[2])
+
+class NoStoreMixin:
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+if os.path.isfile(target_path):
+    allowed_paths = {"/", "/" + os.path.basename(target_path)}
+
+    class SingleFileHandler(NoStoreMixin, http.server.BaseHTTPRequestHandler):
+        def _serve(self, send_body):
+            req_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+            if req_path not in allowed_paths:
+                self.send_error(404, "Not Found")
+                return
+            try:
+                with open(target_path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                self.send_error(404, "Not Found")
+                return
+            ctype, _ = mimetypes.guess_type(target_path)
+            if not ctype:
+                ctype = "application/octet-stream"
+            elif ctype.startswith("text/") or ctype in ("application/javascript", "application/json", "application/xml"):
+                ctype = f"{ctype}; charset=utf-8"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            if send_body:
+                self.wfile.write(data)
+
+        def do_GET(self):
+            self._serve(True)
+
+        def do_HEAD(self):
+            self._serve(False)
+
+    handler_cls = SingleFileHandler
+else:
+    class NoStoreDirHandler(NoStoreMixin, http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=target_path, **kwargs)
+
+    handler_cls = NoStoreDirHandler
+
+server_cls = getattr(http.server, "ThreadingHTTPServer", http.server.HTTPServer)
+class TunelHTTPServer(server_cls):
+    allow_reuse_address = True
+    daemon_threads = True
+
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+httpd = TunelHTTPServer(("127.0.0.1", port), handler_cls)
+httpd.serve_forever()
+PY_EOF
   fi
 
   mkdir -p -- "$STATE_DIR"
@@ -469,8 +612,9 @@ worker_up() {
     target_url="$4"
     ttl_sec="$5"
     run_id="$6"
-    serve_dir="${7:-}"
+    serve_target="${7:-}"
     serve_port="${8:-}"
+    server_py="${9:-}"
     runner_pid="$$"
 
     printf "RUNNER_PID=%s\nPGID=%s\nSID=%s\nRUN_ID=%s\n" \
@@ -500,8 +644,8 @@ worker_up() {
     trap on_term TERM INT HUP
     trap cleanup EXIT
 
-    if [[ -n "$serve_dir" ]]; then
-      python3 -m http.server "$serve_port" --bind 127.0.0.1 --directory "$serve_dir" >>"$log_file" 2>&1 &
+    if [[ -n "$serve_target" ]]; then
+      python3 -c "$server_py" "$serve_target" "$serve_port" "$run_id" >>"$log_file" 2>&1 &
       server_pid="$!"
     fi
 
@@ -516,8 +660,8 @@ worker_up() {
   '
 
   setsid -f bash -c "$runner_code" _ \
-    "$STATE_FILE" "$PID_FILE" "$LOG_FILE" "$target_url" "$ttl_sec" "$run_id" "$serve_dir" "$serve_port" \
-    </dev/null >/dev/null 2>&1
+    "$STATE_FILE" "$PID_FILE" "$LOG_FILE" "$target_url" "$ttl_sec" "$run_id" "$serve_target" "$serve_port" "$server_py" \
+    </dev/null >/dev/null 2>&1 9>&-
 
   local runner_pid="" i
   for (( i=0; i<30; i++ )); do
@@ -548,7 +692,8 @@ worker_up() {
   local ticks_used=0
   for (( i=0; i<max_ticks; i++ )); do
     ticks_used=$i
-    url="$(LC_ALL=C grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_FILE" 2>/dev/null | head -n 1 || true)"
+    url="$(LC_ALL=C grep -oE 'https://[a-z0-9]+(-[a-z0-9]+)+\.trycloudflare\.com' "$LOG_FILE" 2>/dev/null \
+      | grep -vx 'https://api\.trycloudflare\.com' | head -n 1 || true)"
     if [[ -n "$url" ]]; then
       break
     fi
@@ -596,7 +741,7 @@ worker_up() {
   local cf_pid srv_pid full_url
   cf_pid="$(ps -s "$runner_pid" -o pid=,comm= 2>/dev/null | awk '$2 == "cloudflared" { print $1; exit }' || true)"
   srv_pid="$(ps -s "$runner_pid" -o pid=,comm= 2>/dev/null | awk '$2 ~ /^python3(\.[0-9]+)?$/ { print $1; exit }' || true)"
-  if [[ -n "$serve_dir" && -z "$srv_pid" ]]; then
+  if [[ -n "$serve_target" && -z "$srv_pid" ]]; then
     echo "tunel-view: local static HTTP server exited unexpectedly" >&2
     [[ -s "$LOG_FILE" ]] && tail -n 25 -- "$LOG_FILE" >&2 || true
     return 1
@@ -647,7 +792,7 @@ worker_logs() {
 cmd="${1:-}"
 shift || true
 case "$cmd" in
-  up)     worker_up "$@" ;;
+  up)     with_lock worker_up "$@" ;;
   down)   worker_down ;;
   status) worker_status ;;
   logs)   worker_logs "$@" ;;
@@ -982,6 +1127,49 @@ if [[ -n "$OPT_SERVE" ]]; then
   fi
 fi
 
+warn_if_target_unreachable() {
+  local url="$1"
+  local reachable=0
+  if command -v python3 >/dev/null 2>&1; then
+    if python3 - "$url" <<'PY' >/dev/null 2>&1
+import socket, sys, urllib.parse
+u = urllib.parse.urlsplit(sys.argv[1])
+host = u.hostname
+port = u.port or (443 if u.scheme == "https" else 80)
+if not host or not port:
+    sys.exit(0)
+with socket.create_connection((host, port), timeout=1.0):
+    pass
+PY
+    then
+      reachable=1
+    fi
+  else
+    local rest="${url#*://}"
+    local hostport="${rest%%/*}"
+    local host="${hostport%%:*}"
+    local port=""
+    if [[ "$hostport" == *:* ]]; then
+      port="${hostport##*:}"
+    elif [[ "$url" == https://* ]]; then
+      port=443
+    else
+      port=80
+    fi
+    if [[ -n "$host" && "$port" =~ ^[0-9]+$ ]]; then
+      if timeout 1 bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$host" "$port" 2>/dev/null; then
+        reachable=1
+      fi
+    else
+      reachable=1
+    fi
+  fi
+
+  if [[ "$reachable" -eq 0 ]]; then
+    echo "tunel-view: warning: nothing appears to be listening on ${url}" >&2
+  fi
+}
+
 case "$ACTION" in
   up)
     TTL_SECONDS="$(parse_ttl_seconds "$OPT_TTL")"
@@ -1011,8 +1199,11 @@ case "$ACTION" in
 
     if [[ "$OPT_KEEP_OTHER" -eq 0 ]]; then
       if [[ "$MODE" == "local" && ( -r "$PI_REF_FILE" || "$OPT_ALL" -eq 1 ) ]]; then
-        run_worker "pi" down >/dev/null 2>&1 || true
-        clear_pi_ref
+        if run_worker "pi" down >/dev/null 2>&1; then
+          clear_pi_ref
+        else
+          echo "tunel-view: warning: failed to stop Pi tunnel on $REMOTE_VIEW_SSH_HOST; keeping Pi reference" >&2
+        fi
       elif [[ "$MODE" == "pi" ]] && ( has_local_state_hint || [[ "$OPT_ALL" -eq 1 ]] ); then
         run_worker "local" down >/dev/null 2>&1 || true
       fi
@@ -1029,7 +1220,19 @@ case "$ACTION" in
         elif [[ -z "$SERVE_PATH" && -z "$TV_SERVE_PATH" && "$TV_TARGET" == "$TARGET_URL" ]]; then
           _same_target=1
         fi
-        if [[ "$_same_target" -eq 1 ]] && [[ "$OPT_TTL_SET" -eq 0 || "${TV_TTL_SECONDS:-0}" == "$TTL_SECONDS" ]]; then
+        _ttl_ok=1
+        if [[ "$OPT_TTL_SET" -eq 1 ]]; then
+          if [[ "${TV_TTL_SECONDS:-0}" != "$TTL_SECONDS" ]]; then
+            _ttl_ok=0
+          elif [[ "$TTL_SECONDS" -gt 0 ]]; then
+            _now="$(date +%s)"
+            _rem=$(( ${TV_EXPIRES_EPOCH:-0} - _now ))
+            if (( _rem < 300 )); then
+              _ttl_ok=0
+            fi
+          fi
+        fi
+        if [[ "$_same_target" -eq 1 && "$_ttl_ok" -eq 1 ]]; then
           REUSED=1
           out="$existing_out"
         fi
@@ -1037,6 +1240,9 @@ case "$ACTION" in
     fi
 
     if [[ "$REUSED" -eq 0 ]]; then
+      if [[ "$MODE" == "local" && ( -n "$OPT_PORT" || -n "$OPT_TARGET" ) ]]; then
+        warn_if_target_unreachable "$TARGET_URL"
+      fi
       out="$(run_worker "$MODE" up "$MODE" "$TARGET_URL" "$TTL_SECONDS" "$TTL_LABEL" "$OPT_WAIT" "$SERVE_PATH" "$SERVE_DIR" "$SERVE_URL_PATH")"
       parse_kv_stream "$out"
     fi

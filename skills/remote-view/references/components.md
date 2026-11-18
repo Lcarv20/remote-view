@@ -62,7 +62,8 @@ Keep headings short and plain; put code symbols in the `.muted` subtitle. Adding
   <button type="button" class="btn ghost">Cancel</button>
 </div>
 
-<div class="progress" aria-label="Completion"><span style="width: 65%"></span></div>
+<div class="progress" data-value="65" aria-label="Completion"><span></span></div>
+<progress value="65" max="100" aria-label="Completion"></progress>
 
 <aside class="callout info">
   <i class="callout-icon" data-icon="info-circle"></i>
@@ -72,7 +73,7 @@ Keep headings short and plain; put code symbols in the `.muted` subtitle. Adding
 </aside>
 ```
 
-Callout variants: `info`, `success`, `warning`, `danger`. Badge variants: `brand`/`info`, `success`, `warning`, `danger` (plus `pill`). Note: `progress > span` width percentage is the one exception where a data value (`width: 65%`) may use `style` if needed, or omit `.progress` when prose suffices.
+Callout variants: `info`, `success`, `warning`, `danger`. Badge variants: `brand`/`info`, `success`, `warning`, `danger` (plus `pill`). Both `<div class="progress" data-value="65"><span></span></div>` and native `<progress value="65" max="100"></progress>` render progress bars without inline `style`.
 
 ## 3. Stats & Cards in Grids (Short Summaries Only)
 
@@ -163,11 +164,13 @@ flowchart LR
   <canvas id="myChart"></canvas>
 </div>
 <script>
-  new Chart(document.getElementById("myChart"), {
-    type: "bar",
-    data: { labels: ["A", "B"], datasets: [{ label: "Latency (ms)", data: [12, 4] }] },
-    options: { responsive: true, maintainAspectRatio: false }
-  });
+  if (window.Chart) {
+    new Chart(document.getElementById("myChart"), {
+      type: "bar",
+      data: { labels: ["A", "B"], datasets: [{ label: "Latency (ms)", data: [12, 4] }] },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+  }
 </script>
 ```
 
@@ -176,3 +179,12 @@ KaTeX math renders `$$...$$`, `\[...\]`, and `\(...\)` while ignoring single `$`
 ## 7. Smart Tables (Automatic)
 
 Plain semantic `<table>` markup (`<thead>`, `<tbody>`, optional `<caption>` and `<tfoot>`) gets smart responsive behavior automatically with no extra classes: readable column minimum widths prevent mobile text cramping, overflowing tables gain horizontal scroll shadows and a reactive `Scroll →` hint plus a 1-tap `Table / Cards` view toggle, compact first columns stay sticky when room permits, and tall tables cap height with a sticky `<thead>`.
+
+## 8. Bundled Tabler Icons (55 in `RV_ICONS`)
+
+Use `<i data-icon="<name>"></i>` with any of these 55 locally bundled icons:
+
+- **Status & Alerts:** `bolt`, `check`, `x`, `info-circle`, `alert-triangle`, `alert-circle`, `shield-check`, `flame`, `sparkles`, `bug`
+- **Navigation & UI:** `home`, `menu-2`, `chevron-right`, `chevron-down`, `chevron-left`, `arrow-right`, `arrow-up-right`, `external-link`, `dots-vertical`, `layout-sidebar`, `list`, `search`, `settings`, `sun`, `moon`
+- **Actions:** `copy`, `refresh`, `plus`, `trash`, `download`, `upload`, `eye`, `link`, `tag`, `clock`
+- **Infra, Code & Metrics:** `server`, `terminal-2`, `code`, `file-code`, `database`, `cloud`, `network`, `cpu`, `lock`, `rocket`, `folder`, `git-branch`, `layers-intersect`, `plug`, `world`, `chart-bar`, `activity`, `gauge`, `device-mobile`, `device-desktop`
